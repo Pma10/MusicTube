@@ -17,3 +17,9 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - run: python -m compileall -q backend
+      - run: python -c "from backend.main import app; print(app.title)"
