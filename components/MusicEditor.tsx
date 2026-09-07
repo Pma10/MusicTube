@@ -27,6 +27,7 @@ const SAMPLE_LYRICS = `[00:02.00]오래된 장면 끝에 멈춰 선 밤
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"];
 
 type AudioOrigin = "attachment" | "url" | "resolver" | null;
+type RenderResolution = "1080p" | "1440p" | "4k";
 
 function durationToSeconds(value?: string | null) {
   if (!value) return null;
@@ -51,45 +52,71 @@ function filenameFromUrl(value: string) {
   }
 }
 
+function safeDownloadName(title: string, artist: string, resolution: RenderResolution) {
+  const base = `${artist ? `${artist} - ` : ""}${title || "MusicTube"}`
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .trim();
+  return `${base || "MusicTube"} [${resolution}].mp4`;
+}
+
 export function MusicEditor() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const coverObjectUrlRef = useRef<string | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
   const resolverRequestRef = useRef(0);
+
   const [title, setTitle] = useState("Nostalgia");
   const [artist, setArtist] = useState("BIG Naughty");
   const [channel, setChannel] = useState("1H KPOP");
   const [lyricsText, setLyricsText] = useState(SAMPLE_LYRICS);
+
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverName, setCoverName] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioName, setAudioName] = useState<string | null>(null);
   const [audioOrigin, setAudioOrigin] = useState<AudioOrigin>(null);
   const [audioImportUrl, setAudioImportUrl] = useState("");
-  const [coverName, setCoverName] = useState<string | null>(null);
   const [genieSongId, setGenieSongId] = useState<string | null>(null);
+
   const [duration, setDuration] = useState(180);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isImportingAudio, setIsImportingAudio] = useState(false);
   const [isResolvingAudio, setIsResolvingAudio] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
+
   const [motionPreset, setMotionPreset] = useState<MotionPreset>("soft");
   const [motionIntensity, setMotionIntensity] = useState(1);
   const [theme, setTheme] = useState<ThemePreset>("warm");
+
+  const [renderResolution, setRenderResolution] = useState<RenderResolution>("1080p");
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderError, setRenderError] = useState<string | null>(null);
+  const [renderElapsed, setRenderElapsed] = useState(0);
+
   const lyrics = useMemo(() => parseLyrics(lyricsText), [lyricsText]);
 
   useEffect(() => {
     if (audioUrl || !isPlaying) return;
-
     const timer = window.setInterval(() => {
-      setCurrentTime((value) => {
-        if (value >= duration) return 0;
-        return Math.min(duration, value + 0.1);
-      });
+      setCurrentTime((value) => (value >= duration ? 0 : Math.min(duration, value + 0.1)));
     }, 100);
-
     return () => window.clearInterval(timer);
   }, [audioUrl, duration, isPlaying]);
+
+  useEffect(() => {
+    if (!isRendering) {
+      setRenderElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setRenderElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isRendering]);
 
   useEffect(() => {
     return () => {
@@ -110,6 +137,7 @@ export function MusicEditor() {
     const nextUrl = URL.createObjectURL(file);
     coverObjectUrlRef.current = nextUrl;
     setCoverUrl(nextUrl);
+    setCoverFile(file);
     setCoverName(file.name);
     setGenieSongId(null);
   };
@@ -127,11 +155,13 @@ export function MusicEditor() {
     const nextUrl = URL.createObjectURL(file);
     audioObjectUrlRef.current = nextUrl;
     setAudioUrl(nextUrl);
+    setAudioFile(file);
     setAudioName(file.name);
     setAudioOrigin(origin);
     setCurrentTime(0);
     setIsPlaying(false);
     setMediaError(null);
+    setRenderError(null);
   };
 
   const loadLyricsFile = async (file?: File) => {
@@ -215,12 +245,12 @@ export function MusicEditor() {
     setTitle(selection.song.title || title);
     setArtist(selection.song.artist || artist);
     setGenieSongId(selection.source.song_id);
+    setCoverFile(null);
 
     if (selection.song.thumbnail_url) {
       setCoverUrl(selection.song.thumbnail_url);
       setCoverName(`Genie · ${selection.song.album || selection.song.title}`);
     }
-
     if (selection.lrc.trim()) setLyricsText(selection.lrc);
 
     const genieDuration = durationToSeconds(selection.song.duration);
@@ -237,12 +267,8 @@ export function MusicEditor() {
       setIsPlaying((value) => !value);
       return;
     }
-
-    if (audioRef.current.paused) {
-      await audioRef.current.play();
-    } else {
-      audioRef.current.pause();
-    }
+    if (audioRef.current.paused) await audioRef.current.play();
+    else audioRef.current.pause();
   };
 
   const seek = (value: number) => {
@@ -269,17 +295,68 @@ export function MusicEditor() {
     URL.revokeObjectURL(url);
   };
 
+  const renderVideo = async () => {
+    if (!audioFile) {
+      setRenderError("먼저 음원을 자동으로 불러오거나 파일로 첨부해 주세요.");
+      return;
+    }
+    if (!Number.isFinite(duration) || duration <= 0) {
+      setRenderError("음원 길이를 확인할 수 없습니다. 음원을 다시 불러와 주세요.");
+      return;
+    }
+
+    setRenderError(null);
+    setIsRendering(true);
+    audioRef.current?.pause();
+
+    try {
+      const form = new FormData();
+      form.append("audio", audioFile, audioFile.name);
+      if (coverFile) form.append("cover", coverFile, coverFile.name);
+      else if (coverUrl?.startsWith("https://")) form.append("coverUrl", coverUrl);
+      form.append("title", title);
+      form.append("artist", artist);
+      form.append("channel", channel);
+      form.append("lyrics", lyricsText);
+      form.append("duration", String(duration));
+      form.append("motionPreset", motionPreset);
+      form.append("motionIntensity", String(motionIntensity));
+      form.append("theme", theme);
+      form.append("resolution", renderResolution);
+
+      const response = await fetch("/api/render", { method: "POST", body: form });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? `영상 생성에 실패했습니다. (HTTP ${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = safeDownloadName(title, artist, renderResolution);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (error) {
+      setRenderError(error instanceof Error ? error.message : "영상 생성에 실패했습니다.");
+    } finally {
+      setIsRendering(false);
+    }
+  };
+
   return (
     <main className="studio-page">
       <header className="studio-header">
         <div>
           <div className="eyebrow"><Sparkles size={14} /> MusicTube Studio</div>
           <h1>음악 영상 생성기</h1>
-          <p>Genie에서 곡 정보를 불러오고, 음원은 자동 소스 · URL · 파일 첨부 중 편한 방식으로 연결하세요.</p>
+          <p>Genie 검색부터 음원 연결, 싱크 가사, 애니메이션, MP4 출력까지 웹에서 한 번에 처리합니다.</p>
         </div>
         <div className="header-actions">
-          <span className="status-pill"><span /> Preview ready</span>
-          <button className="secondary-button" type="button" onClick={exportProject}>
+          <span className="status-pill"><span /> {isRendering ? "Rendering" : "Ready"}</span>
+          <button className="secondary-button" type="button" onClick={exportProject} disabled={isRendering}>
             <Download size={16} /> 프로젝트 저장
           </button>
         </div>
@@ -294,7 +371,7 @@ export function MusicEditor() {
             </div>
             <GenieSearch onApply={applyGenieSelection} />
             {isResolvingAudio ? (
-              <div className="helper-row"><span>연결된 음원 소스에서 자동 검색 중…</span><LoaderCircle size={12} /></div>
+              <div className="helper-row"><span>연결된 음원 소스에서 자동 검색 중…</span><LoaderCircle className="spin-icon" size={12} /></div>
             ) : null}
           </section>
 
@@ -341,17 +418,16 @@ export function MusicEditor() {
               />
             </label>
             <button
-              className="secondary-button"
-              style={{ width: "100%", justifyContent: "center", marginTop: 9 }}
+              className="secondary-button full-button"
               type="button"
-              disabled={isImportingAudio}
+              disabled={isImportingAudio || isRendering}
               onClick={() => void importAudioFromUrl(audioImportUrl)}
             >
-              {isImportingAudio ? <LoaderCircle size={15} /> : <Link2 size={15} />}
+              {isImportingAudio ? <LoaderCircle className="spin-icon" size={15} /> : <Link2 size={15} />}
               {isImportingAudio ? "음원 가져오는 중" : "URL에서 음원 가져오기"}
             </button>
             <div className="helper-row"><span>HTTPS · 최대 160 MB</span><span>직접 다운로드 가능한 음원</span></div>
-            {mediaError ? <div style={{ marginTop: 8, color: "#ff9a9a", fontSize: 10 }}>{mediaError}</div> : null}
+            {mediaError ? <div className="inline-error">{mediaError}</div> : null}
           </section>
 
           <section className="control-section">
@@ -369,7 +445,7 @@ export function MusicEditor() {
               <span>04</span>
               <div><strong>Lyrics</strong><small>LRC 입력 또는 파일 첨부</small></div>
             </div>
-            <label className="upload-card" style={{ marginBottom: 9 }}>
+            <label className="upload-card lyrics-upload">
               <input type="file" accept=".lrc,text/plain" onChange={(event) => void loadLyricsFile(event.target.files?.[0])} />
               <div className="upload-icon"><FileText size={18} /></div>
               <div className="upload-copy"><strong>LRC 가사 첨부</strong><span>.lrc / text</span></div>
@@ -425,6 +501,37 @@ export function MusicEditor() {
               ))}
             </div>
           </section>
+
+          <section className="control-section export-section">
+            <div className="section-title">
+              <span>06</span>
+              <div><strong>Export</strong><small>H.264 + AAC · 60 FPS</small></div>
+            </div>
+            <div className="segmented-control resolution-control">
+              {(["1080p", "1440p", "4k"] as RenderResolution[]).map((resolution) => (
+                <button
+                  key={resolution}
+                  type="button"
+                  className={renderResolution === resolution ? "active" : ""}
+                  disabled={isRendering}
+                  onClick={() => setRenderResolution(resolution)}
+                >
+                  {resolution === "4k" ? "4K" : resolution}
+                </button>
+              ))}
+            </div>
+            <button
+              className="render-button"
+              type="button"
+              disabled={isRendering || !audioFile}
+              onClick={() => void renderVideo()}
+            >
+              {isRendering ? <LoaderCircle className="spin-icon" size={18} /> : <Download size={18} />}
+              {isRendering ? `영상 생성 중 · ${renderElapsed}s` : `${renderResolution === "4k" ? "4K" : renderResolution} MP4 생성`}
+            </button>
+            <div className="helper-row"><span>Remotion + FFmpeg</span><span>{audioFile ? "render ready" : "음원 필요"}</span></div>
+            {renderError ? <div className="inline-error">{renderError}</div> : null}
+          </section>
         </aside>
 
         <section className="preview-column">
@@ -433,8 +540,8 @@ export function MusicEditor() {
             <div className="preview-badges">
               {genieSongId ? <span>Genie synced</span> : null}
               {audioOrigin ? <span>{audioOrigin} audio</span> : null}
-              <span>60 FPS motion</span>
-              <span>LRC sync</span>
+              <span>60 FPS</span>
+              <span>{renderResolution === "4k" ? "4K export" : `${renderResolution} export`}</span>
             </div>
           </div>
 
@@ -454,9 +561,18 @@ export function MusicEditor() {
             onSeek={seek}
           />
 
-          <div className="render-note">
-            <div><strong>실시간 프리뷰</strong><span>Genie 메타데이터 + 자동/URL/첨부 음원 + LRC 첨부를 하나의 프로젝트로 구성합니다.</span></div>
-            <span className="coming-pill">MP4 renderer · next</span>
+          <div className={`render-note ${isRendering ? "render-note--active" : ""}`}>
+            <div>
+              <strong>{isRendering ? "MP4 렌더링 중" : "웹에서 바로 MP4 생성"}</strong>
+              <span>
+                {isRendering
+                  ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · 60 FPS · ${renderElapsed}초 경과`
+                  : "현재 프리뷰 설정 그대로 Remotion이 프레임을 렌더하고 H.264 + AAC MP4로 인코딩합니다."}
+              </span>
+            </div>
+            <button className="coming-pill render-quick-button" type="button" disabled={isRendering || !audioFile} onClick={() => void renderVideo()}>
+              {isRendering ? "Rendering…" : "Generate MP4"}
+            </button>
           </div>
         </section>
       </div>
