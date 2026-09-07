@@ -17,6 +17,8 @@ MusicTube is a small studio for building polished, YouTube-ready music visuals f
 - Warm, Cool and Mono visual themes
 - Subtle Ken Burns background/cover motion while playing
 - Editable title, artist and channel text
+- One-click server-side MP4 rendering with Remotion
+- 1080p, 1440p and 4K H.264 + AAC output at 60 FPS
 - Project configuration export as `.musictube.json`
 - Responsive editor UI and reduced-motion accessibility
 
@@ -43,6 +45,20 @@ Open `http://localhost:3000`. Search results are proxied through the Next.js `/a
 
 `GENIE_API_URL` can point at a separately deployed Genie bridge in production. The dependency is pinned to a known `Pma10/GenieAPI` commit for reproducible installs.
 
+## MP4 rendering
+
+The Export section sends the selected audio, cover art, metadata, LRC lyrics and motion settings to `/api/render`. The Node.js route creates a temporary Remotion bundle, renders the `MusicTubeVideo` composition, encodes H.264 video with AAC audio and streams the finished MP4 back to the browser.
+
+Available output sizes:
+
+- `1080p` — 1920×1080
+- `1440p` — 2560×1440
+- `4K` — 3840×2160
+
+All presets render at 60 FPS. The renderer uses temporary files under the system temp directory and `public/render-jobs/`, then removes them after the render/download finishes. Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports.
+
+Rendering is intended for a normal Node.js host/VPS/container with enough CPU, RAM and temporary disk space. Long 4K/60 FPS videos are compute-heavy and are not a good fit for short-lived serverless request limits.
+
 ## Audio sources
 
 GenieAPI is used for metadata, artwork and synced lyrics. MusicTube does not scrape or bypass a streaming service to obtain protected full-track audio. Instead the editor supports three audio paths:
@@ -60,7 +76,3 @@ GenieAPI is used for metadata, artwork and synced lyrics. MusicTube does not scr
 Only use audio you have the rights or permission to use and publish.
 
 > GenieAPI is an unofficial wrapper around genie.co.kr and depends on the current Genie page/data format. Use it conservatively and expect upstream site changes to occasionally require parser updates.
-
-## Next milestone
-
-The editor/preview layer is intentionally separated from the final renderer. The next step is to add a render composition and server-side FFmpeg/Remotion pipeline for H.264 + AAC MP4 export at 1080p/1440p/4K.
