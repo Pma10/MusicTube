@@ -16,6 +16,8 @@ const SAMPLE_LYRICS = `[00:02.00]오래된 장면 끝에 멈춰 선 밤
 
 export function MusicEditor() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const coverObjectUrlRef = useRef<string | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
   const [title, setTitle] = useState("Nostalgia");
   const [artist, setArtist] = useState("BIG Naughty");
   const [channel, setChannel] = useState("1H KPOP");
@@ -47,28 +49,27 @@ export function MusicEditor() {
 
   useEffect(() => {
     return () => {
-      if (coverUrl) URL.revokeObjectURL(coverUrl);
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      if (coverObjectUrlRef.current) URL.revokeObjectURL(coverObjectUrlRef.current);
+      if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
     };
-  }, [audioUrl, coverUrl]);
+  }, []);
 
   const loadCover = (file?: File) => {
     if (!file) return;
+    if (coverObjectUrlRef.current) URL.revokeObjectURL(coverObjectUrlRef.current);
     const nextUrl = URL.createObjectURL(file);
-    setCoverUrl((previous) => {
-      if (previous) URL.revokeObjectURL(previous);
-      return nextUrl;
-    });
+    coverObjectUrlRef.current = nextUrl;
+    setCoverUrl(nextUrl);
     setCoverName(file.name);
   };
 
   const loadAudio = (file?: File) => {
     if (!file) return;
+    audioRef.current?.pause();
+    if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
     const nextUrl = URL.createObjectURL(file);
-    setAudioUrl((previous) => {
-      if (previous) URL.revokeObjectURL(previous);
-      return nextUrl;
-    });
+    audioObjectUrlRef.current = nextUrl;
+    setAudioUrl(nextUrl);
     setAudioName(file.name);
     setCurrentTime(0);
     setIsPlaying(false);
