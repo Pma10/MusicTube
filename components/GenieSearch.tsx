@@ -142,7 +142,7 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
         <div className={styles.empty}>검색 결과가 없습니다.</div>
       ) : null}
 
-      <p className={styles.note}>GenieAPI에서 제목 · 아티스트 · 앨범아트 · 타임싱크 가사를 가져옵니다. 음원 파일은 별도로 업로드해야 합니다.</p>
+      <p className={styles.note}>GenieAPI는 제목 · 아티스트 · 앨범아트 · 타임싱크 가사를 채웁니다. 음원은 연결된 자동 소스가 있으면 함께 가져오고, 없으면 URL이나 파일 첨부를 사용할 수 있습니다.</p>
     </div>
   );
 }
