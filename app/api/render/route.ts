@@ -152,8 +152,8 @@ async function cleanupPath(path: string | null | undefined) {
 
 export async function POST(request: Request) {
   const jobId = randomUUID();
-  const publicJobDir = resolve(process.cwd(), "public", "render-jobs", jobId);
   const outputDir = join(tmpdir(), `musictube-render-${jobId}`);
+  const assetDir = join(outputDir, "assets");
   const outputPath = join(outputDir, "video.mp4");
   let serveUrl: string | null = null;
 
@@ -165,6 +165,16 @@ export async function POST(request: Request) {
     }
     if (audio.size > MAX_AUDIO_BYTES) {
       return NextResponse.json({ error: "음원 파일은 최대 160 MB까지 지원합니다." }, { status: 413 });
+    }
+
+    const cover = form.get("cover");
+    if (cover instanceof File && cover.size > 0) {
+      if (cover.size > MAX_COVER_BYTES) {
+        return NextResponse.json({ error: "앨범아트는 최대 20 MB까지 지원합니다." }, { status: 413 });
+      }
+      if (!cover.type.startsWith("image/")) {
+        return NextResponse.json({ error: "앨범아트 파일 형식이 올바르지 않습니다." }, { status: 415 });
+      }
     }
 
     const durationSeconds = Number(text(form, "duration", "0"));
@@ -190,33 +200,25 @@ export async function POST(request: Request) {
       ? Math.max(0.6, Math.min(1.4, motionIntensityRaw))
       : 1;
 
-    await mkdir(publicJobDir, { recursive: true });
-    await mkdir(outputDir, { recursive: true });
+    await mkdir(assetDir, { recursive: true });
 
     const audioExtension = safeAudioExtension(audio);
     const audioFilename = `audio${audioExtension}`;
-    await writeFile(join(publicJobDir, audioFilename), new Uint8Array(await audio.arrayBuffer()));
+    await writeFile(join(assetDir, audioFilename), new Uint8Array(await audio.arrayBuffer()));
 
     let coverPath: string | null = null;
-    const cover = form.get("cover");
     if (cover instanceof File && cover.size > 0) {
-      if (cover.size > MAX_COVER_BYTES) {
-        return NextResponse.json({ error: "앨범아트는 최대 20 MB까지 지원합니다." }, { status: 413 });
-      }
-      if (!cover.type.startsWith("image/")) {
-        return NextResponse.json({ error: "앨범아트 파일 형식이 올바르지 않습니다." }, { status: 415 });
-      }
       const extension = coverExtension(cover.type);
       const filename = `cover${extension}`;
-      await writeFile(join(publicJobDir, filename), new Uint8Array(await cover.arrayBuffer()));
-      coverPath = `render-jobs/${jobId}/${filename}`;
+      await writeFile(join(assetDir, filename), new Uint8Array(await cover.arrayBuffer()));
+      coverPath = filename;
     } else {
       const coverUrl = text(form, "coverUrl");
       if (coverUrl) {
         const downloaded = await downloadCover(coverUrl);
         const filename = `cover${downloaded.extension}`;
-        await writeFile(join(publicJobDir, filename), downloaded.data);
-        coverPath = `render-jobs/${jobId}/${filename}`;
+        await writeFile(join(assetDir, filename), downloaded.data);
+        coverPath = filename;
       }
     }
 
@@ -225,7 +227,7 @@ export async function POST(request: Request) {
       artist: bounded(text(form, "artist"), 160, "Unknown Artist"),
       channel: bounded(text(form, "channel"), 80, "MUSICTUBE"),
       lyrics: text(form, "lyrics").slice(0, 250_000),
-      audioPath: `render-jobs/${jobId}/${audioFilename}`,
+      audioPath: audioFilename,
       coverPath,
       durationSeconds,
       motionPreset,
@@ -235,7 +237,7 @@ export async function POST(request: Request) {
 
     serveUrl = await bundle({
       entryPoint: resolve(process.cwd(), "remotion", "index.ts"),
-      publicDir: resolve(process.cwd(), "public"),
+      publicDir: assetDir,
       onProgress: () => undefined,
     });
 
@@ -264,7 +266,7 @@ export async function POST(request: Request) {
       logLevel: "warn",
     });
 
-    await cleanupPath(publicJobDir);
+    await cleanupPath(assetDir);
     await cleanupPath(serveUrl);
     serveUrl = null;
 
@@ -288,7 +290,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "영상 생성에 실패했습니다.";
-    await cleanupPath(publicJobDir);
     await cleanupPath(outputDir);
     await cleanupPath(serveUrl);
     return NextResponse.json({ error: message }, { status: 500 });
