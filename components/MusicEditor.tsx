@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, ImagePlus, Music2, Sparkles, Upload } from "lucide-react";
 import { parseLyrics } from "@/lib/lrc";
+import { GenieSearch, type GenieSelection } from "@/components/GenieSearch";
 import {
   VideoPreview,
   type MotionPreset,
@@ -13,6 +14,15 @@ const SAMPLE_LYRICS = `[00:02.00]오래된 장면 끝에 멈춰 선 밤
 [00:06.20]낯익은 공기가 천천히 번지고
 [00:10.40]희미했던 마음이 다시 선명해져
 [00:14.60]우리는 그때의 온도를 기억해`;
+
+function durationToSeconds(value?: string | null) {
+  if (!value) return null;
+  const parts = value.trim().split(":").map(Number);
+  if (parts.some((part) => !Number.isFinite(part))) return null;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return null;
+}
 
 export function MusicEditor() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -26,6 +36,7 @@ export function MusicEditor() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState<string | null>(null);
   const [coverName, setCoverName] = useState<string | null>(null);
+  const [genieSongId, setGenieSongId] = useState<string | null>(null);
   const [duration, setDuration] = useState(180);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -61,6 +72,7 @@ export function MusicEditor() {
     coverObjectUrlRef.current = nextUrl;
     setCoverUrl(nextUrl);
     setCoverName(file.name);
+    setGenieSongId(null);
   };
 
   const loadAudio = (file?: File) => {
@@ -73,6 +85,30 @@ export function MusicEditor() {
     setAudioName(file.name);
     setCurrentTime(0);
     setIsPlaying(false);
+  };
+
+  const applyGenieSelection = (selection: GenieSelection) => {
+    if (coverObjectUrlRef.current) {
+      URL.revokeObjectURL(coverObjectUrlRef.current);
+      coverObjectUrlRef.current = null;
+    }
+
+    setTitle(selection.song.title || title);
+    setArtist(selection.song.artist || artist);
+    setGenieSongId(selection.source.song_id);
+
+    if (selection.song.thumbnail_url) {
+      setCoverUrl(selection.song.thumbnail_url);
+      setCoverName(`Genie · ${selection.song.album || selection.song.title}`);
+    }
+
+    if (selection.lrc.trim()) setLyricsText(selection.lrc);
+
+    const genieDuration = durationToSeconds(selection.song.duration);
+    if (genieDuration && !audioUrl) {
+      setDuration(genieDuration);
+      setCurrentTime(0);
+    }
   };
 
   const togglePlay = async () => {
@@ -101,6 +137,7 @@ export function MusicEditor() {
       lyrics: lyricsText,
       appearance: { theme, motionPreset, motionIntensity },
       media: { audioName, coverName },
+      source: genieSongId ? { provider: "Genie", songId: genieSongId } : null,
     };
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -117,7 +154,7 @@ export function MusicEditor() {
         <div>
           <div className="eyebrow"><Sparkles size={14} /> MusicTube Studio</div>
           <h1>음악 영상 생성기</h1>
-          <p>앨범아트, 음원, 가사를 넣고 부드러운 전환을 바로 미리보세요.</p>
+          <p>Genie에서 곡 정보를 불러오거나 직접 앨범아트, 음원, 가사를 넣어 부드러운 전환을 미리보세요.</p>
         </div>
         <div className="header-actions">
           <span className="status-pill"><span /> Preview ready</span>
@@ -132,6 +169,14 @@ export function MusicEditor() {
           <section className="control-section">
             <div className="section-title">
               <span>01</span>
+              <div><strong>Genie</strong><small>메타데이터 · 앨범아트 · 싱크 가사</small></div>
+            </div>
+            <GenieSearch onApply={applyGenieSelection} />
+          </section>
+
+          <section className="control-section">
+            <div className="section-title">
+              <span>02</span>
               <div><strong>Media</strong><small>영상에 사용할 파일</small></div>
             </div>
 
@@ -158,7 +203,7 @@ export function MusicEditor() {
 
           <section className="control-section">
             <div className="section-title">
-              <span>02</span>
+              <span>03</span>
               <div><strong>Metadata</strong><small>영상에 표시할 정보</small></div>
             </div>
             <label className="field-label">제목<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
@@ -168,7 +213,7 @@ export function MusicEditor() {
 
           <section className="control-section">
             <div className="section-title">
-              <span>03</span>
+              <span>04</span>
               <div><strong>Lyrics</strong><small>LRC 타임코드 지원</small></div>
             </div>
             <textarea
@@ -178,12 +223,12 @@ export function MusicEditor() {
               spellCheck={false}
               placeholder="[00:12.30]첫 번째 가사"
             />
-            <div className="helper-row"><span>{lyrics.length} lines</span><span>[mm:ss.xx] 형식</span></div>
+            <div className="helper-row"><span>{lyrics.length} lines</span><span>{genieSongId ? `Genie #${genieSongId}` : "[mm:ss.xx] 형식"}</span></div>
           </section>
 
           <section className="control-section">
             <div className="section-title">
-              <span>04</span>
+              <span>05</span>
               <div><strong>Motion</strong><small>전환 감도와 분위기</small></div>
             </div>
             <div className="segmented-control">
@@ -226,7 +271,11 @@ export function MusicEditor() {
         <section className="preview-column">
           <div className="preview-toolbar">
             <div><strong>Preview</strong><span>1920 × 1080 · 16:9</span></div>
-            <div className="preview-badges"><span>60 FPS motion</span><span>LRC sync</span></div>
+            <div className="preview-badges">
+              {genieSongId ? <span>Genie synced</span> : null}
+              <span>60 FPS motion</span>
+              <span>LRC sync</span>
+            </div>
           </div>
 
           <VideoPreview
@@ -246,7 +295,7 @@ export function MusicEditor() {
           />
 
           <div className="render-note">
-            <div><strong>실시간 프리뷰 완성</strong><span>현재 단계에서는 편집/가사 싱크/모션 프리뷰와 프로젝트 저장을 지원합니다.</span></div>
+            <div><strong>실시간 프리뷰 완성</strong><span>GenieAPI 검색, 타임싱크 가사, 편집/모션 프리뷰와 프로젝트 저장을 지원합니다.</span></div>
             <span className="coming-pill">MP4 renderer · next</span>
           </div>
         </section>
