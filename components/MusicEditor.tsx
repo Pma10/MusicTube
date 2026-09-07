@@ -55,6 +55,7 @@ export function MusicEditor() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const coverObjectUrlRef = useRef<string | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
+  const resolverRequestRef = useRef(0);
   const [title, setTitle] = useState("Nostalgia");
   const [artist, setArtist] = useState("BIG Naughty");
   const [channel, setChannel] = useState("1H KPOP");
@@ -92,10 +93,16 @@ export function MusicEditor() {
 
   useEffect(() => {
     return () => {
+      resolverRequestRef.current += 1;
       if (coverObjectUrlRef.current) URL.revokeObjectURL(coverObjectUrlRef.current);
       if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
     };
   }, []);
+
+  const cancelAudioResolver = () => {
+    resolverRequestRef.current += 1;
+    setIsResolvingAudio(false);
+  };
 
   const loadCover = (file?: File) => {
     if (!file) return;
@@ -114,6 +121,7 @@ export function MusicEditor() {
       return;
     }
 
+    if (origin !== "resolver") cancelAudioResolver();
     audioRef.current?.pause();
     if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
     const nextUrl = URL.createObjectURL(file);
@@ -149,6 +157,7 @@ export function MusicEditor() {
       return false;
     }
 
+    if (origin !== "resolver") cancelAudioResolver();
     setIsImportingAudio(true);
     if (!quiet) setMediaError(null);
 
@@ -174,6 +183,8 @@ export function MusicEditor() {
   };
 
   const resolveAudioForSelection = async (selection: GenieSelection) => {
+    const requestId = resolverRequestRef.current + 1;
+    resolverRequestRef.current = requestId;
     setIsResolvingAudio(true);
 
     try {
@@ -184,14 +195,14 @@ export function MusicEditor() {
         artist: selection.song.artist,
       });
       const response = await fetch(`/api/audio/resolve?${params.toString()}`);
-      if (response.status === 204) return;
-      if (!response.ok) return;
+      if (requestId !== resolverRequestRef.current) return;
+      if (response.status === 204 || !response.ok) return;
 
       const payload = (await response.json()) as { url?: string; filename?: string | null };
-      if (!payload.url) return;
+      if (requestId !== resolverRequestRef.current || !payload.url) return;
       await importAudioFromUrl(payload.url, payload.filename, "resolver", true);
     } finally {
-      setIsResolvingAudio(false);
+      if (requestId === resolverRequestRef.current) setIsResolvingAudio(false);
     }
   };
 
