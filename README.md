@@ -55,7 +55,7 @@ Available output sizes:
 - `1440p` — 2560×1440
 - `4K` — 3840×2160
 
-All presets render at 60 FPS. The renderer uses temporary files under the system temp directory and `public/render-jobs/`, then removes them after the render/download finishes. Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports.
+All presets render at 60 FPS. Each render gets an isolated directory under the operating system temp folder; uploaded audio/artwork, the encoded MP4 and render assets are removed after rendering/download cleanup. Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports.
 
 Rendering is intended for a normal Node.js host/VPS/container with enough CPU, RAM and temporary disk space. Long 4K/60 FPS videos are compute-heavy and are not a good fit for short-lived serverless request limits.
 
