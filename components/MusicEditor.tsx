@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, ImagePlus, Music2, Sparkles, Upload } from "lucide-react";
+import {
+  Download,
+  FileText,
+  ImagePlus,
+  Link2,
+  LoaderCircle,
+  Music2,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { parseLyrics } from "@/lib/lrc";
 import { GenieSearch, type GenieSelection } from "@/components/GenieSearch";
 import {
@@ -15,6 +24,10 @@ const SAMPLE_LYRICS = `[00:02.00]오래된 장면 끝에 멈춰 선 밤
 [00:10.40]희미했던 마음이 다시 선명해져
 [00:14.60]우리는 그때의 온도를 기억해`;
 
+const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"];
+
+type AudioOrigin = "attachment" | "url" | "resolver" | null;
+
 function durationToSeconds(value?: string | null) {
   if (!value) return null;
   const parts = value.trim().split(":").map(Number);
@@ -22,6 +35,20 @@ function durationToSeconds(value?: string | null) {
   if (parts.length === 2) return parts[0] * 60 + parts[1];
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return null;
+}
+
+function isAudioFile(file: File) {
+  if (file.type.startsWith("audio/")) return true;
+  return AUDIO_EXTENSIONS.some((extension) => file.name.toLowerCase().endsWith(extension));
+}
+
+function filenameFromUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return decodeURIComponent(url.pathname.split("/").pop() || "remote-audio");
+  } catch {
+    return "remote-audio";
+  }
 }
 
 export function MusicEditor() {
@@ -35,11 +62,16 @@ export function MusicEditor() {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState<string | null>(null);
+  const [audioOrigin, setAudioOrigin] = useState<AudioOrigin>(null);
+  const [audioImportUrl, setAudioImportUrl] = useState("");
   const [coverName, setCoverName] = useState<string | null>(null);
   const [genieSongId, setGenieSongId] = useState<string | null>(null);
   const [duration, setDuration] = useState(180);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isImportingAudio, setIsImportingAudio] = useState(false);
+  const [isResolvingAudio, setIsResolvingAudio] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [motionPreset, setMotionPreset] = useState<MotionPreset>("soft");
   const [motionIntensity, setMotionIntensity] = useState(1);
   const [theme, setTheme] = useState<ThemePreset>("warm");
@@ -75,16 +107,92 @@ export function MusicEditor() {
     setGenieSongId(null);
   };
 
-  const loadAudio = (file?: File) => {
+  const loadAudio = (file?: File, origin: AudioOrigin = "attachment") => {
     if (!file) return;
+    if (!isAudioFile(file)) {
+      setMediaError("지원하는 음원 파일이 아닙니다. MP3, WAV, M4A, AAC, FLAC, OGG, OPUS를 사용해 주세요.");
+      return;
+    }
+
     audioRef.current?.pause();
     if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
     const nextUrl = URL.createObjectURL(file);
     audioObjectUrlRef.current = nextUrl;
     setAudioUrl(nextUrl);
     setAudioName(file.name);
+    setAudioOrigin(origin);
     setCurrentTime(0);
     setIsPlaying(false);
+    setMediaError(null);
+  };
+
+  const loadLyricsFile = async (file?: File) => {
+    if (!file) return;
+    try {
+      const content = await file.text();
+      if (!content.trim()) throw new Error("빈 가사 파일입니다.");
+      setLyricsText(content);
+    } catch (error) {
+      setMediaError(error instanceof Error ? error.message : "가사 파일을 읽지 못했습니다.");
+    }
+  };
+
+  const importAudioFromUrl = async (
+    rawUrl: string,
+    suggestedFilename?: string | null,
+    origin: AudioOrigin = "url",
+    quiet = false,
+  ) => {
+    const cleanUrl = rawUrl.trim();
+    if (!cleanUrl) {
+      if (!quiet) setMediaError("음원 URL을 입력해 주세요.");
+      return false;
+    }
+
+    setIsImportingAudio(true);
+    if (!quiet) setMediaError(null);
+
+    try {
+      const response = await fetch(`/api/media/import?url=${encodeURIComponent(cleanUrl)}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? "음원을 가져오지 못했습니다.");
+      }
+
+      const blob = await response.blob();
+      const filename = suggestedFilename?.trim() || filenameFromUrl(cleanUrl);
+      const file = new File([blob], filename, { type: blob.type || "audio/mpeg" });
+      loadAudio(file, origin);
+      setAudioImportUrl(cleanUrl);
+      return true;
+    } catch (error) {
+      if (!quiet) setMediaError(error instanceof Error ? error.message : "음원을 가져오지 못했습니다.");
+      return false;
+    } finally {
+      setIsImportingAudio(false);
+    }
+  };
+
+  const resolveAudioForSelection = async (selection: GenieSelection) => {
+    setIsResolvingAudio(true);
+
+    try {
+      const params = new URLSearchParams({
+        provider: "genie",
+        songId: selection.source.song_id,
+        title: selection.song.title,
+        artist: selection.song.artist,
+      });
+      const response = await fetch(`/api/audio/resolve?${params.toString()}`);
+      if (response.status === 204) return;
+      if (!response.ok) return;
+
+      const payload = (await response.json()) as { url?: string; filename?: string | null };
+      if (!payload.url) return;
+      await importAudioFromUrl(payload.url, payload.filename, "resolver", true);
+    } finally {
+      setIsResolvingAudio(false);
+    }
   };
 
   const applyGenieSelection = (selection: GenieSelection) => {
@@ -109,6 +217,8 @@ export function MusicEditor() {
       setDuration(genieDuration);
       setCurrentTime(0);
     }
+
+    void resolveAudioForSelection(selection);
   };
 
   const togglePlay = async () => {
@@ -136,7 +246,7 @@ export function MusicEditor() {
       metadata: { title, artist, channel },
       lyrics: lyricsText,
       appearance: { theme, motionPreset, motionIntensity },
-      media: { audioName, coverName },
+      media: { audioName, audioOrigin, coverName },
       source: genieSongId ? { provider: "Genie", songId: genieSongId } : null,
     };
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
@@ -154,7 +264,7 @@ export function MusicEditor() {
         <div>
           <div className="eyebrow"><Sparkles size={14} /> MusicTube Studio</div>
           <h1>음악 영상 생성기</h1>
-          <p>Genie에서 곡 정보를 불러오거나 직접 앨범아트, 음원, 가사를 넣어 부드러운 전환을 미리보세요.</p>
+          <p>Genie에서 곡 정보를 불러오고, 음원은 자동 소스 · URL · 파일 첨부 중 편한 방식으로 연결하세요.</p>
         </div>
         <div className="header-actions">
           <span className="status-pill"><span /> Preview ready</span>
@@ -172,33 +282,65 @@ export function MusicEditor() {
               <div><strong>Genie</strong><small>메타데이터 · 앨범아트 · 싱크 가사</small></div>
             </div>
             <GenieSearch onApply={applyGenieSelection} />
+            {isResolvingAudio ? (
+              <div className="helper-row"><span>연결된 음원 소스에서 자동 검색 중…</span><LoaderCircle size={12} /></div>
+            ) : null}
           </section>
 
           <section className="control-section">
             <div className="section-title">
               <span>02</span>
-              <div><strong>Media</strong><small>영상에 사용할 파일</small></div>
+              <div><strong>Media</strong><small>자동 가져오기 또는 직접 첨부</small></div>
             </div>
 
             <label className="upload-card">
               <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => loadCover(event.target.files?.[0])} />
               <div className="upload-icon"><ImagePlus size={19} /></div>
               <div className="upload-copy">
-                <strong>{coverName ?? "앨범아트 업로드"}</strong>
+                <strong>{coverName ?? "앨범아트 첨부"}</strong>
                 <span>PNG, JPG, WEBP</span>
               </div>
               <Upload size={16} />
             </label>
 
-            <label className="upload-card">
-              <input type="file" accept="audio/*" onChange={(event) => loadAudio(event.target.files?.[0])} />
+            <label
+              className="upload-card"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                loadAudio(event.dataTransfer.files?.[0]);
+              }}
+            >
+              <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus" onChange={(event) => loadAudio(event.target.files?.[0])} />
               <div className="upload-icon"><Music2 size={19} /></div>
               <div className="upload-copy">
-                <strong>{audioName ?? "음원 업로드"}</strong>
-                <span>MP3, WAV, M4A, FLAC*</span>
+                <strong>{audioName ?? "음원 첨부 또는 드래그"}</strong>
+                <span>{audioOrigin ? `source · ${audioOrigin}` : "MP3, WAV, M4A, AAC, FLAC, OGG"}</span>
               </div>
               <Upload size={16} />
             </label>
+
+            <label className="field-label">
+              음원 URL
+              <input
+                value={audioImportUrl}
+                onChange={(event) => setAudioImportUrl(event.target.value)}
+                placeholder="https://.../song.mp3"
+                inputMode="url"
+              />
+            </label>
+            <button
+              className="secondary-button"
+              style={{ width: "100%", justifyContent: "center", marginTop: 9 }}
+              type="button"
+              disabled={isImportingAudio}
+              onClick={() => void importAudioFromUrl(audioImportUrl)}
+            >
+              {isImportingAudio ? <LoaderCircle size={15} /> : <Link2 size={15} />}
+              {isImportingAudio ? "음원 가져오는 중" : "URL에서 음원 가져오기"}
+            </button>
+            <div className="helper-row"><span>HTTPS · 최대 160 MB</span><span>직접 다운로드 가능한 음원</span></div>
+            {mediaError ? <div style={{ marginTop: 8, color: "#ff9a9a", fontSize: 10 }}>{mediaError}</div> : null}
           </section>
 
           <section className="control-section">
@@ -214,8 +356,14 @@ export function MusicEditor() {
           <section className="control-section">
             <div className="section-title">
               <span>04</span>
-              <div><strong>Lyrics</strong><small>LRC 타임코드 지원</small></div>
+              <div><strong>Lyrics</strong><small>LRC 입력 또는 파일 첨부</small></div>
             </div>
+            <label className="upload-card" style={{ marginBottom: 9 }}>
+              <input type="file" accept=".lrc,text/plain" onChange={(event) => void loadLyricsFile(event.target.files?.[0])} />
+              <div className="upload-icon"><FileText size={18} /></div>
+              <div className="upload-copy"><strong>LRC 가사 첨부</strong><span>.lrc / text</span></div>
+              <Upload size={16} />
+            </label>
             <textarea
               className="lyrics-editor"
               value={lyricsText}
@@ -273,6 +421,7 @@ export function MusicEditor() {
             <div><strong>Preview</strong><span>1920 × 1080 · 16:9</span></div>
             <div className="preview-badges">
               {genieSongId ? <span>Genie synced</span> : null}
+              {audioOrigin ? <span>{audioOrigin} audio</span> : null}
               <span>60 FPS motion</span>
               <span>LRC sync</span>
             </div>
@@ -295,7 +444,7 @@ export function MusicEditor() {
           />
 
           <div className="render-note">
-            <div><strong>실시간 프리뷰 완성</strong><span>GenieAPI 검색, 타임싱크 가사, 편집/모션 프리뷰와 프로젝트 저장을 지원합니다.</span></div>
+            <div><strong>실시간 프리뷰</strong><span>Genie 메타데이터 + 자동/URL/첨부 음원 + LRC 첨부를 하나의 프로젝트로 구성합니다.</span></div>
             <span className="coming-pill">MP4 renderer · next</span>
           </div>
         </section>
