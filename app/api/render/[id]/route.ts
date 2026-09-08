@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cancelRenderJob, getRenderJob } from "@/lib/render-jobs";
+import { cancelRenderJob, cleanupRenderJob, getRenderJob } from "@/lib/render-jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,10 +18,11 @@ export async function DELETE(_request: Request, context: Context) {
   const job = await getRenderJob(id);
   if (!job) return NextResponse.json({ error: "렌더 작업을 찾을 수 없습니다." }, { status: 404 });
 
-  if (["completed", "failed", "cancelled"].includes(job.status)) {
-    return NextResponse.json({ error: "이미 종료된 렌더 작업입니다." }, { status: 409 });
+  if (job.status === "queued" || job.status === "rendering") {
+    const cancelled = await cancelRenderJob(id);
+    return NextResponse.json({ id, status: cancelled ? "cancelled" : job.status });
   }
 
-  const cancelled = await cancelRenderJob(id);
-  return NextResponse.json({ id, status: cancelled ? "cancelled" : job.status });
+  await cleanupRenderJob(id);
+  return NextResponse.json({ id, status: "deleted" });
 }
