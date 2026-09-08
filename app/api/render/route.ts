@@ -1,14 +1,10 @@
-import { createReadStream } from "node:fs";
 import { lookup } from "node:dns/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import { cpus, tmpdir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { Readable } from "node:stream";
-import { randomUUID } from "node:crypto";
-import { bundle } from "@remotion/bundler";
-import { renderMedia, selectComposition } from "@remotion/renderer";
+import { tmpdir } from "node:os";
+import { extname, join } from "node:path";
 import { NextResponse } from "next/server";
+import { queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
 import type { MusicTubeRenderProps, RenderMotionPreset, RenderThemePreset } from "@/remotion/types";
 
 export const runtime = "nodejs";
@@ -20,7 +16,7 @@ const MAX_DURATION_SECONDS = 6 * 60 * 60;
 const MAX_REDIRECTS = 4;
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"]);
-const RESOLUTION_SCALE = { "1080p": 1, "1440p": 4 / 3, "4k": 2 } as const;
+const RESOLUTIONS = new Set<RenderResolution>(["1080p", "1440p", "4k"]);
 
 function text(form: FormData, key: string, fallback = "") {
   const value = form.get(key);
@@ -139,23 +135,20 @@ async function downloadCover(rawUrl: string) {
   throw new Error("Too many cover redirects");
 }
 
-function outputFilename(title: string, artist: string) {
+function outputFilename(title: string, artist: string, resolution: RenderResolution) {
   const raw = `${artist ? `${artist} - ` : ""}${title || "MusicTube"}`;
   const safe = raw.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 120);
-  return `${safe || "MusicTube"}.mp4`;
+  return `${safe || "MusicTube"} [${resolution === "4k" ? "4K" : resolution}].mp4`;
 }
 
-async function cleanupPath(path: string | null | undefined) {
-  if (!path || /^https?:\/\//i.test(path)) return;
+async function cleanup(path: string) {
   await rm(path, { recursive: true, force: true }).catch(() => undefined);
 }
 
 export async function POST(request: Request) {
-  const jobId = randomUUID();
-  const outputDir = join(tmpdir(), `musictube-render-${jobId}`);
-  const assetDir = join(outputDir, "assets");
-  const outputPath = join(outputDir, "video.mp4");
-  let serveUrl: string | null = null;
+  const jobRoot = join(tmpdir(), `musictube-render-${crypto.randomUUID()}`);
+  const publicDir = join(jobRoot, "public");
+  const outputPath = join(jobRoot, "video.mp4");
 
   try {
     const form = await request.formData();
@@ -182,8 +175,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "음원 길이 정보가 올바르지 않습니다." }, { status: 400 });
     }
 
-    const resolution = text(form, "resolution", "1080p") as keyof typeof RESOLUTION_SCALE;
-    if (!(resolution in RESOLUTION_SCALE)) {
+    const resolution = text(form, "resolution", "1080p") as RenderResolution;
+    if (!RESOLUTIONS.has(resolution)) {
       return NextResponse.json({ error: "지원하지 않는 출력 해상도입니다." }, { status: 400 });
     }
 
@@ -200,31 +193,31 @@ export async function POST(request: Request) {
       ? Math.max(0.6, Math.min(1.4, motionIntensityRaw))
       : 1;
 
-    await mkdir(assetDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
 
-    const audioExtension = safeAudioExtension(audio);
-    const audioFilename = `audio${audioExtension}`;
-    await writeFile(join(assetDir, audioFilename), new Uint8Array(await audio.arrayBuffer()));
+    const audioFilename = `audio${safeAudioExtension(audio)}`;
+    await writeFile(join(publicDir, audioFilename), new Uint8Array(await audio.arrayBuffer()));
 
     let coverPath: string | null = null;
     if (cover instanceof File && cover.size > 0) {
-      const extension = coverExtension(cover.type);
-      const filename = `cover${extension}`;
-      await writeFile(join(assetDir, filename), new Uint8Array(await cover.arrayBuffer()));
+      const filename = `cover${coverExtension(cover.type)}`;
+      await writeFile(join(publicDir, filename), new Uint8Array(await cover.arrayBuffer()));
       coverPath = filename;
     } else {
       const coverUrl = text(form, "coverUrl");
       if (coverUrl) {
         const downloaded = await downloadCover(coverUrl);
         const filename = `cover${downloaded.extension}`;
-        await writeFile(join(assetDir, filename), downloaded.data);
+        await writeFile(join(publicDir, filename), downloaded.data);
         coverPath = filename;
       }
     }
 
+    const title = bounded(text(form, "title"), 160, "Untitled");
+    const artist = bounded(text(form, "artist"), 160, "Unknown Artist");
     const props: MusicTubeRenderProps = {
-      title: bounded(text(form, "title"), 160, "Untitled"),
-      artist: bounded(text(form, "artist"), 160, "Unknown Artist"),
+      title,
+      artist,
       channel: bounded(text(form, "channel"), 80, "MUSICTUBE"),
       lyrics: text(form, "lyrics").slice(0, 250_000),
       audioPath: audioFilename,
@@ -235,63 +228,19 @@ export async function POST(request: Request) {
       theme,
     };
 
-    serveUrl = await bundle({
-      entryPoint: resolve(process.cwd(), "remotion", "index.ts"),
-      publicDir: assetDir,
-      onProgress: () => undefined,
+    const job = await queueRenderJob({
+      jobRoot,
+      publicDir,
+      outputPath,
+      filename: outputFilename(title, artist, resolution),
+      resolution,
+      props,
     });
 
-    const composition = await selectComposition({
-      serveUrl,
-      id: "MusicTubeVideo",
-      inputProps: props,
-      timeoutInMilliseconds: 120_000,
-      logLevel: "warn",
-    });
-
-    await renderMedia({
-      composition,
-      serveUrl,
-      codec: "h264",
-      outputLocation: outputPath,
-      inputProps: props,
-      scale: RESOLUTION_SCALE[resolution],
-      crf: 18,
-      pixelFormat: "yuv420p",
-      audioCodec: "aac",
-      enforceAudioTrack: true,
-      overwrite: true,
-      concurrency: Math.max(1, Math.min(4, Math.floor(cpus().length / 2) || 1)),
-      timeoutInMilliseconds: 120_000,
-      logLevel: "warn",
-    });
-
-    await cleanupPath(assetDir);
-    await cleanupPath(serveUrl);
-    serveUrl = null;
-
-    const info = await stat(outputPath);
-    const nodeStream = createReadStream(outputPath);
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
-    nodeStream.once("close", () => {
-      void cleanupPath(outputDir);
-    });
-
-    const filename = outputFilename(props.title, props.artist);
-    return new NextResponse(webStream, {
-      headers: {
-        "Content-Type": "video/mp4",
-        "Content-Length": String(info.size),
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(basename(filename))}`,
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-        "X-MusicTube-Resolution": resolution,
-      },
-    });
+    return NextResponse.json(job, { status: 202 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "영상 생성에 실패했습니다.";
-    await cleanupPath(outputDir);
-    await cleanupPath(serveUrl);
+    await cleanup(jobRoot);
+    const message = error instanceof Error ? error.message : "영상 생성 요청에 실패했습니다.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
