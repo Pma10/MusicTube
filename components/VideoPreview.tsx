@@ -39,9 +39,33 @@ const themeFallback: Record<ThemePreset, string> = {
 
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return "0:00";
-  const minutes = Math.floor(value / 60);
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
   const seconds = Math.floor(value % 60);
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  return hours > 0
+    ? `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+    : `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function visibleLyrics(lyrics: LyricLine[], activeIndex: number) {
+  if (activeIndex < 0) return { lines: lyrics.slice(0, 3), activeOffset: -1 };
+  const start = Math.max(0, Math.min(activeIndex - 1, Math.max(0, lyrics.length - 3)));
+  return { lines: lyrics.slice(start, start + 3), activeOffset: activeIndex - start };
+}
+
+function BrandOrbit() {
+  return (
+    <svg className="brand-orbit-svg" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <path id="preview-brand-orbit" d="M50 50m-34 0a34 34 0 1 1 68 0a34 34 0 1 1-68 0" />
+      </defs>
+      <text>
+        <textPath href="#preview-brand-orbit" startOffset="2%">
+          PLAYING · MUSIC · LOOP · PLAYING · MUSIC ·
+        </textPath>
+      </text>
+    </svg>
+  );
 }
 
 export function VideoPreview({
@@ -60,7 +84,7 @@ export function VideoPreview({
   onSeek,
 }: Props) {
   const activeIndex = findActiveLyricIndex(lyrics, currentTime);
-  const visibleLyrics = activeIndex < 0 ? lyrics.slice(0, 3) : lyrics.slice(activeIndex, activeIndex + 3);
+  const lyricWindow = visibleLyrics(lyrics, activeIndex);
   const activeKey = activeIndex < 0 ? "intro" : `${activeIndex}-${lyrics[activeIndex]?.text ?? ""}`;
 
   const transition = {
@@ -75,12 +99,13 @@ export function VideoPreview({
     <section className={`video-shell theme-${theme}`}>
       <div
         className={`ambient-bg ${isPlaying ? "ambient-bg--playing" : ""}`}
-        style={{
-          backgroundImage: coverUrl ? `url(${coverUrl})` : themeFallback[theme],
-        }}
+        style={{ backgroundImage: coverUrl ? `url(${coverUrl})` : themeFallback[theme] }}
       />
       <div className="ambient-wash" />
+      <div className="ambient-bloom" />
+      <div className="ambient-vignette" />
       <div className="video-noise" />
+      <div className="video-inner-frame" />
 
       <motion.div
         className="brand-mark"
@@ -89,11 +114,11 @@ export function VideoPreview({
         transition={{ delay: 0.15, ...transition }}
       >
         <strong>{channel || "MUSICTUBE"}</strong>
-        <span className="brand-orbit">PLAYING · MUSIC · LOOP ·</span>
+        <BrandOrbit />
       </motion.div>
 
       <div className="chrome-actions" aria-hidden="true">
-        <X strokeWidth={2.8} />
+        <X strokeWidth={2.6} />
         <MoreVertical />
       </div>
 
@@ -109,12 +134,12 @@ export function VideoPreview({
             animate={
               isPlaying
                 ? {
-                    scale: motionPreset === "minimal" ? 1 : [1, 1.018, 1],
-                    rotate: motionPreset === "cinematic" ? [0, 0.18, 0] : 0,
+                    scale: motionPreset === "minimal" ? 1 : [1, 1.016, 1],
+                    rotate: motionPreset === "cinematic" ? [0, 0.16, 0] : 0,
                   }
                 : { scale: 1, rotate: 0 }
             }
-            transition={{ duration: 12 / Math.max(0.7, motionIntensity), repeat: Infinity, ease: "easeInOut" }}
+            transition={{ duration: 13 / Math.max(0.7, motionIntensity), repeat: Infinity, ease: "easeInOut" }}
           >
             {coverUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -126,7 +151,21 @@ export function VideoPreview({
                 <small>DROP COVER ART</small>
               </div>
             )}
+            <div className="cover-sheen" />
           </motion.div>
+
+          <motion.button
+            className="cover-edge-pause"
+            type="button"
+            aria-label={isPlaying ? "Pause preview" : "Play preview"}
+            onClick={onTogglePlay}
+            whileTap={{ scale: 0.92 }}
+            initial={{ opacity: 0, scale: 0.82 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.3, ...transition }}
+          >
+            {isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+          </motion.button>
         </motion.div>
 
         <div className="track-panel">
@@ -150,15 +189,18 @@ export function VideoPreview({
                 exit={{ opacity: 0, y: -12 * motionIntensity, filter: "blur(4px)" }}
                 transition={transition}
               >
-                {visibleLyrics.length ? (
-                  visibleLyrics.map((line, index) => (
-                    <div
-                      className={`lyric-line ${index === 0 && activeIndex >= 0 ? "lyric-line--active" : ""}`}
-                      key={`${line.time}-${line.text}`}
-                    >
-                      {line.text}
-                    </div>
-                  ))
+                {lyricWindow.lines.length ? (
+                  lyricWindow.lines.map((line, index) => {
+                    const isActive = index === lyricWindow.activeOffset;
+                    return (
+                      <div
+                        className={`lyric-line ${isActive ? "lyric-line--active" : ""}`}
+                        key={`${line.time}-${line.text}`}
+                      >
+                        {line.text || " "}
+                      </div>
+                    );
+                  })
                 ) : (
                   <div className="lyric-line lyric-line--empty">가사를 입력하면 여기에 표시됩니다.</div>
                 )}
@@ -168,12 +210,8 @@ export function VideoPreview({
 
           <div className="player-area">
             <div className="player-controls">
-              <button className="ghost-control" type="button" aria-label="Like preview">
-                <Heart />
-              </button>
-              <button className="ghost-control" type="button" aria-label="Previous preview">
-                <SkipBack fill="currentColor" />
-              </button>
+              <button className="ghost-control" type="button" aria-label="Like preview"><Heart /></button>
+              <button className="ghost-control" type="button" aria-label="Previous preview"><SkipBack fill="currentColor" /></button>
               <motion.button
                 className="main-play"
                 type="button"
@@ -183,12 +221,8 @@ export function VideoPreview({
               >
                 {isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
               </motion.button>
-              <button className="ghost-control" type="button" aria-label="Next preview">
-                <SkipForward fill="currentColor" />
-              </button>
-              <button className="ghost-control" type="button" aria-label="Favorite preview">
-                <Heart />
-              </button>
+              <button className="ghost-control" type="button" aria-label="Next preview"><SkipForward fill="currentColor" /></button>
+              <button className="ghost-control" type="button" aria-label="Favorite preview"><Heart /></button>
             </div>
 
             <div className="timeline-row">
@@ -203,7 +237,8 @@ export function VideoPreview({
                   onSeek(ratio * duration);
                 }}
               >
-                <span className="timeline-fill" style={{ transform: `scaleX(${progress})` }} />
+                <span className="timeline-fill" style={{ transform: `translateY(-50%) scaleX(${progress})` }} />
+                <span className="timeline-thumb" style={{ left: `${progress * 100}%` }} />
               </button>
               <span>{formatTime(duration)}</span>
             </div>
