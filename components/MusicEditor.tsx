@@ -103,6 +103,7 @@ export function MusicEditor() {
 
   const lyrics = useMemo(() => parseLyrics(lyricsText), [lyricsText]);
   const isRendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
+  const renderJobId = renderJob?.id;
 
   useEffect(() => {
     if (audioUrl || !isPlaying) return;
@@ -120,15 +121,15 @@ export function MusicEditor() {
     const startedAt = Date.now();
     const timer = window.setInterval(() => setRenderElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     return () => window.clearInterval(timer);
-  }, [isRendering, renderJob?.id]);
+  }, [isRendering, renderJobId]);
 
   useEffect(() => {
-    if (!renderJob || !isRendering) return;
+    if (!renderJobId || !isRendering) return;
     let active = true;
 
     const poll = async () => {
       try {
-        const response = await fetch(`/api/render/${renderJob.id}`, { cache: "no-store" });
+        const response = await fetch(`/api/render/${renderJobId}`, { cache: "no-store" });
         const payload = (await response.json()) as RenderJob & { error?: string };
         if (!active) return;
         if (!response.ok) throw new Error(payload.error || "렌더 상태를 확인하지 못했습니다.");
@@ -146,7 +147,7 @@ export function MusicEditor() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isRendering, renderJob?.id]);
+  }, [isRendering, renderJobId]);
 
   useEffect(() => {
     return () => {
@@ -339,9 +340,11 @@ export function MusicEditor() {
       form.append("resolution", renderResolution);
 
       const response = await fetch("/api/render?async=1", { method: "POST", body: form });
-      const payload = (await response.json().catch(() => null)) as RenderJob | { error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as RenderJob | { error?: string | null } | null;
       if (!response.ok || !payload || !("id" in payload)) {
-        throw new Error(payload && "error" in payload ? payload.error : `영상 생성 요청에 실패했습니다. (HTTP ${response.status})`);
+        const fallback = `영상 생성 요청에 실패했습니다. (HTTP ${response.status})`;
+        const message = payload && "error" in payload && payload.error ? payload.error : fallback;
+        throw new Error(message);
       }
       setRenderJob(payload);
     } catch (error) {
