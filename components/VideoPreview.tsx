@@ -53,25 +53,9 @@ function visibleLyrics(lyrics: LyricLine[], activeIndex: number) {
   return { lines: lyrics.slice(start, start + 3), activeOffset: activeIndex - start };
 }
 
-function BrandOrbit() {
-  return (
-    <svg className="brand-orbit-svg" viewBox="0 0 100 100" aria-hidden="true">
-      <defs>
-        <path id="preview-brand-orbit" d="M50 50m-34 0a34 34 0 1 1 68 0a34 34 0 1 1-68 0" />
-      </defs>
-      <text>
-        <textPath href="#preview-brand-orbit" startOffset="2%">
-          PLAYING · MUSIC · LOOP · PLAYING · MUSIC ·
-        </textPath>
-      </text>
-    </svg>
-  );
-}
-
 export function VideoPreview({
   title,
   artist,
-  channel,
   coverUrl,
   currentTime,
   duration,
@@ -106,16 +90,6 @@ export function VideoPreview({
       <div className="ambient-vignette" />
       <div className="video-noise" />
       <div className="video-inner-frame" />
-
-      <motion.div
-        className="brand-mark"
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15, ...transition }}
-      >
-        <strong>{channel || "MUSICTUBE"}</strong>
-        <BrandOrbit />
-      </motion.div>
 
       <div className="chrome-actions" aria-hidden="true">
         <X strokeWidth={2.6} />
@@ -153,34 +127,50 @@ export function VideoPreview({
             )}
             <div className="cover-sheen" />
           </motion.div>
-
-          <motion.button
-            className="cover-edge-pause"
-            type="button"
-            aria-label={isPlaying ? "Pause preview" : "Play preview"}
-            onClick={onTogglePlay}
-            style={{ x: "-50%", y: "-50%" }}
-            whileTap={{ scale: 0.92 }}
-            initial={{ opacity: 0, scale: 0.82 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.3, ...transition }}
-          >
-            {isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
-          </motion.button>
         </motion.div>
 
-        <div className="track-panel">
+        <div
+          className="track-panel"
+          style={{ padding: "1.2% 2.5% 0 3.6%" }}
+        >
           <motion.div
             className="track-heading"
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.12, ...transition }}
           >
-            <h2>{title || "Untitled"}</h2>
-            <p>{artist || "Unknown Artist"}</p>
+            <h2
+              style={{
+                maxWidth: "100%",
+                paddingRight: "2%",
+                fontSize: "clamp(22px, 3.65vw, 64px)",
+                lineHeight: 1.02,
+                whiteSpace: "normal",
+                overflow: "visible",
+                textOverflow: "clip",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {title || "Untitled"}
+            </h2>
+            <p
+              style={{
+                maxWidth: "100%",
+                paddingRight: "2%",
+                whiteSpace: "normal",
+                overflow: "visible",
+                textOverflow: "clip",
+              }}
+            >
+              {artist || "Unknown Artist"}
+            </p>
           </motion.div>
 
-          <div className="lyrics-stage" aria-live="polite">
+          <div
+            className="lyrics-stage"
+            aria-live="polite"
+            style={{ padding: "10.5% 2% 1.5% 0" }}
+          >
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={activeKey}
