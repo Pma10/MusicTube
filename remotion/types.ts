@@ -1,5 +1,6 @@
 export type RenderMotionPreset = "soft" | "cinematic" | "minimal";
 export type RenderThemePreset = "warm" | "cool" | "mono";
+export type RenderProfile = "fast" | "quality";
 
 export type MusicTubeRenderProps = {
   title: string;
@@ -12,4 +13,5 @@ export type MusicTubeRenderProps = {
   motionPreset: RenderMotionPreset;
   motionIntensity: number;
   theme: RenderThemePreset;
+  renderProfile: RenderProfile;
 };
