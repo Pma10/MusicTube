@@ -85,6 +85,21 @@ function titleFontSize(value: string) {
   return 43;
 }
 
+function lyricFontSize(value: string, active: boolean) {
+  const length = [...value].length;
+  if (length >= 80) return active ? 15 : 12;
+  if (length >= 54) return active ? 18 : 14;
+  if (length >= 34) return active ? 20 : 16;
+  return active ? 23 : 18;
+}
+
+function lyricLineHeight(value: string, active: boolean) {
+  const length = [...value].length;
+  if (length >= 54) return active ? 1.12 : 1.14;
+  if (length >= 34) return active ? 1.15 : 1.17;
+  return active ? 1.18 : 1.22;
+}
+
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
   const style: CSSProperties = primary
     ? {
@@ -139,9 +154,20 @@ function LyricStack({
         placeItems: "center",
         opacity,
         transform: `translateY(${y}px)`,
+        overflow: "hidden",
       }}
     >
-      <div style={{ width: "100%", display: "grid", gap: 9, textAlign: "center" }}>
+      <div
+        style={{
+          width: "100%",
+          maxHeight: "100%",
+          display: "grid",
+          alignContent: "center",
+          gap: 7,
+          overflow: "hidden",
+          textAlign: "center",
+        }}
+      >
         {visible.length ? (
           visible.map((line, visibleIndex) => {
             const isActive = visibleIndex === activeOffset;
@@ -149,13 +175,15 @@ function LyricStack({
               <div
                 key={`${line.time}-${line.text}-${visibleIndex}`}
                 style={{
-                  padding: "0 8px",
-                  fontSize: isActive ? 26 : 20,
-                  lineHeight: isActive ? 1.24 : 1.28,
+                  maxWidth: "100%",
+                  padding: "0 10px",
+                  fontSize: lyricFontSize(line.text, isActive),
+                  lineHeight: lyricLineHeight(line.text, isActive),
                   fontWeight: isActive ? 650 : 500,
                   color: isActive ? "rgba(255,255,255,.98)" : "rgba(255,255,255,.48)",
                   letterSpacing: "-0.035em",
                   overflowWrap: "anywhere",
+                  wordBreak: "keep-all",
                   textShadow: isActive
                     ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
                     : "0 2px 17px rgba(0,0,0,.22)",
@@ -166,7 +194,7 @@ function LyricStack({
             );
           })
         ) : (
-          <div style={{ fontSize: 20, color: "rgba(255,255,255,.48)" }}>가사가 없습니다.</div>
+          <div style={{ fontSize: 18, color: "rgba(255,255,255,.48)" }}>가사가 없습니다.</div>
         )}
       </div>
     </div>
@@ -392,7 +420,7 @@ export function MusicVideo({
               position: "relative",
               minHeight: 0,
               width: "100%",
-              padding: "12px 8px 26px 0",
+              padding: "8px 8px 18px 0",
               overflow: "hidden",
             }}
           >

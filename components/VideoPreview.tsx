@@ -54,6 +54,13 @@ function visibleLyrics(lyrics: LyricLine[], activeIndex: number) {
   return { lines: lyrics.slice(start, start + 3), activeOffset: activeIndex - start };
 }
 
+function lyricLengthClass(text: string) {
+  const length = [...text].length;
+  if (length >= 54) return "lyric-line--xlong";
+  if (length >= 34) return "lyric-line--long";
+  return "";
+}
+
 export function VideoPreview({
   title,
   artist,
@@ -172,20 +179,17 @@ export function VideoPreview({
             </p>
           </motion.div>
 
-          <div
-            className="lyrics-stage"
-            aria-live="polite"
-            style={{ padding: "6.2% 1.2% 2.2% 0" }}
-          >
+          <div className="lyrics-stage" aria-live="polite">
             <motion.div className="lyrics-stack" layout transition={{ layout: lyricTransition }}>
               <AnimatePresence initial={false} mode="popLayout">
                 {lyricWindow.lines.length ? (
                   lyricWindow.lines.map((line, index) => {
                     const isActive = index === lyricWindow.activeOffset;
+                    const lengthClass = lyricLengthClass(line.text);
                     return (
                       <motion.div
                         layout="position"
-                        className={`lyric-line ${isActive ? "lyric-line--active" : ""}`}
+                        className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}
                         key={`${line.time}-${line.text}`}
                         initial={{ opacity: 0, y: 9 * motionIntensity }}
                         animate={{ opacity: 1, y: 0 }}
