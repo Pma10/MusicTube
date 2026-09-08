@@ -17,6 +17,8 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+      - name: Smoke test fast MP4 render
+        run: npm run render:smoke
       - name: Render visual design proof
         if: github.event_name == 'pull_request'
         run: npm run design:proof
