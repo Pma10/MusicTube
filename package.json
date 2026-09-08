@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "setup:local": "node scripts/setup-local.mjs",
+    "setup:accel": "node scripts/setup-acceleration.mjs",
     "local": "node scripts/local.mjs",
     "design:proof": "node scripts/render-design-proof.mjs",
     "render:smoke": "node scripts/render-speed-smoke.mjs"

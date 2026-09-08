@@ -35,7 +35,6 @@ await writeFile(join(publicDir, "cover.svg"), proofCover, "utf8");
 const inputProps = {
   title: "Nostalgia",
   artist: "BIG Naughty (서동현)",
-  channel: "1H KPOP",
   lyrics: [
     "[00:01.00]문득 네가 생각나는 밤",
     "[00:05.00]우리가 걷던 길 위에 서서",

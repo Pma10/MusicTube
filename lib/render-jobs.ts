@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { bundle } from "@remotion/bundler";
 import {
   makeCancelSignal,
@@ -14,7 +15,14 @@ import type { MusicTubeRenderProps, RenderProfile } from "@/remotion/types";
 
 export type RenderResolution = "1080p" | "1440p" | "4k";
 export type RenderJobStatus = "queued" | "rendering" | "completed" | "failed" | "cancelled";
-type HardwareAcceleration = "disable" | "if-possible";
+export type RenderEncoder = "intel-qsv" | "nvidia-nvenc" | "apple-videotoolbox" | "software-x264";
+type RemotionHardwareAcceleration = "disable" | "if-possible";
+type FfmpegOverride = (info: { type: "pre-stitcher" | "stitcher"; args: string[] }) => string[];
+
+type EncoderSelection = {
+  encoder: RenderEncoder;
+  binariesDirectory: string | null;
+};
 
 export type PreparedRenderJob = {
   jobRoot: string;
@@ -38,7 +46,8 @@ type RenderJob = {
   outputBytes: number | null;
   resolvedConcurrency: number | null;
   parallelEncoding: boolean | null;
-  hardwareAcceleration: HardwareAcceleration;
+  encoder: RenderEncoder;
+  binariesDirectory: string | null;
 };
 
 type RenderRuntimeState = {
@@ -76,9 +85,16 @@ const VIDEO_BITRATES: Record<RenderProfile, Record<RenderResolution, Bitrate>> =
   },
 };
 
+const ENCODER_LABELS: Record<RenderEncoder, string> = {
+  "intel-qsv": "Intel Quick Sync (QSV)",
+  "nvidia-nvenc": "NVIDIA NVENC",
+  "apple-videotoolbox": "Apple VideoToolbox",
+  "software-x264": "CPU x264",
+};
+
 const COMPLETED_TTL_MS = 6 * 60 * 60 * 1000;
 const FAILED_TTL_MS = 60 * 60 * 1000;
-let cachedHardwareAcceleration: HardwareAcceleration | null = null;
+let cachedEncoderSelection: EncoderSelection | null = null;
 
 function renderFps(profile: RenderProfile) {
   return profile === "quality" ? 60 : 30;
@@ -98,36 +114,152 @@ function resolveRenderConcurrency(profile: RenderProfile) {
   return Math.max(1, Math.min(6, Math.ceil(cores * 0.75)));
 }
 
-function resolveHardwareAcceleration(): HardwareAcceleration {
-  if (cachedHardwareAcceleration) return cachedHardwareAcceleration;
+function processSucceeded(command: string, args: string[], timeout = 5_000) {
+  try {
+    const result = spawnSync(command, args, {
+      stdio: "ignore",
+      timeout,
+      windowsHide: true,
+    });
+    return !result.error && result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasNvidiaGpu() {
+  if (process.platform !== "win32" && process.platform !== "linux") return false;
+  return processSucceeded("nvidia-smi", ["--query-gpu=name", "--format=csv,noheader"], 3_000);
+}
+
+function qsvBinariesDirectory() {
+  if (process.platform !== "win32" || process.arch !== "x64") return null;
+  const configured = process.env.MUSICTUBE_FFMPEG_BIN_DIR?.trim();
+  const directory = configured || join(process.cwd(), ".musictube", "ffmpeg", "bin");
+  const required = ["ffmpeg.exe", "ffprobe.exe", "remotion.exe"].map((name) => join(directory, name));
+  return required.every((path) => existsSync(path)) ? directory : null;
+}
+
+function canUseIntelQsv(directory: string) {
+  return processSucceeded(
+    join(directory, "ffmpeg.exe"),
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=64x64:r=1:d=0.2",
+      "-vf",
+      "format=nv12",
+      "-frames:v",
+      "1",
+      "-c:v",
+      "h264_qsv",
+      "-preset",
+      "veryfast",
+      "-f",
+      "null",
+      "-",
+    ],
+    8_000,
+  );
+}
+
+function softwareEncoder(): EncoderSelection {
+  return { encoder: "software-x264", binariesDirectory: null };
+}
+
+function resolveEncoderSelection(): EncoderSelection {
+  if (cachedEncoderSelection) return cachedEncoderSelection;
+
+  const forced = (process.env.MUSICTUBE_RENDER_ENCODER ?? "auto").trim().toLowerCase();
+  const qsvDirectory = qsvBinariesDirectory();
+  const qsvAvailable = Boolean(qsvDirectory && canUseIntelQsv(qsvDirectory));
+  const nvidiaAvailable = hasNvidiaGpu();
+
+  const pickQsv = (): EncoderSelection | null =>
+    qsvAvailable && qsvDirectory ? { encoder: "intel-qsv", binariesDirectory: qsvDirectory } : null;
+  const pickNvenc = (): EncoderSelection | null =>
+    nvidiaAvailable ? { encoder: "nvidia-nvenc", binariesDirectory: null } : null;
+
+  if (forced === "qsv" || forced === "intel-qsv") {
+    cachedEncoderSelection = pickQsv() ?? softwareEncoder();
+    return cachedEncoderSelection;
+  }
+  if (forced === "nvenc" || forced === "nvidia-nvenc") {
+    cachedEncoderSelection = pickNvenc() ?? softwareEncoder();
+    return cachedEncoderSelection;
+  }
+  if (forced === "x264" || forced === "software-x264") {
+    cachedEncoderSelection = softwareEncoder();
+    return cachedEncoderSelection;
+  }
 
   if (process.platform === "darwin") {
-    cachedHardwareAcceleration = "if-possible";
-    return cachedHardwareAcceleration;
+    cachedEncoderSelection = { encoder: "apple-videotoolbox", binariesDirectory: null };
+    return cachedEncoderSelection;
   }
 
-  if (process.platform === "win32" || process.platform === "linux") {
-    try {
-      const probe = spawnSync(
-        "nvidia-smi",
-        ["--query-gpu=name", "--format=csv,noheader"],
-        {
-          stdio: "ignore",
-          timeout: 3_000,
-          windowsHide: true,
-        },
-      );
-      if (!probe.error && probe.status === 0) {
-        cachedHardwareAcceleration = "if-possible";
-        return cachedHardwareAcceleration;
+  if (process.platform === "win32") {
+    cachedEncoderSelection = pickNvenc() ?? pickQsv() ?? softwareEncoder();
+    return cachedEncoderSelection;
+  }
+
+  if (process.platform === "linux") {
+    cachedEncoderSelection = pickNvenc() ?? softwareEncoder();
+    return cachedEncoderSelection;
+  }
+
+  cachedEncoderSelection = softwareEncoder();
+  return cachedEncoderSelection;
+}
+
+function remotionHardwareAcceleration(encoder: RenderEncoder): RemotionHardwareAcceleration {
+  return encoder === "nvidia-nvenc" || encoder === "apple-videotoolbox" ? "if-possible" : "disable";
+}
+
+function intelQsvOverride(profile: RenderProfile): FfmpegOverride {
+  return ({ args }) => {
+    const next = [...args];
+    let qsvVideoEncode = false;
+
+    for (let index = 0; index < next.length - 1; index += 1) {
+      if (next[index] === "-c:v" && next[index + 1] === "libx264") {
+        next[index + 1] = "h264_qsv";
+        qsvVideoEncode = true;
       }
-    } catch {
-      // Fall through to software encoding.
     }
-  }
 
-  cachedHardwareAcceleration = "disable";
-  return cachedHardwareAcceleration;
+    if (!qsvVideoEncode) return next;
+
+    const cleaned: string[] = [];
+    for (let index = 0; index < next.length; index += 1) {
+      const arg = next[index];
+      if (arg === "-preset" && index + 1 < next.length) {
+        index += 1;
+        continue;
+      }
+      if (arg === "-pix_fmt" && index + 1 < next.length) {
+        cleaned.push(arg, "nv12");
+        index += 1;
+        continue;
+      }
+      cleaned.push(arg);
+    }
+
+    const output = cleaned.pop();
+    if (!output) return cleaned;
+    cleaned.push(
+      "-preset",
+      profile === "fast" ? "veryfast" : "medium",
+      "-async_depth",
+      profile === "fast" ? "6" : "4",
+      output,
+    );
+    return cleaned;
+  };
 }
 
 async function removePath(path: string | null | undefined) {
@@ -136,6 +268,7 @@ async function removePath(path: string | null | undefined) {
 }
 
 function publicJob(job: RenderJob) {
+  const accelerated = job.encoder !== "software-x264";
   return {
     id: job.id,
     status: job.status,
@@ -149,7 +282,9 @@ function publicJob(job: RenderJob) {
     fps: renderFps(job.data.profile),
     resolvedConcurrency: job.resolvedConcurrency,
     parallelEncoding: job.parallelEncoding,
-    hardwareAcceleration: job.hardwareAcceleration,
+    hardwareAcceleration: accelerated ? "enabled" as const : "disabled" as const,
+    encoder: job.encoder,
+    encoderLabel: ENCODER_LABELS[job.encoder],
     outputBytes: job.outputBytes,
     downloadUrl: job.status === "completed" ? `/api/render/${job.id}/download` : null,
   };
@@ -177,7 +312,9 @@ async function processJob(jobId: string) {
   job.cancel = cancel;
 
   const concurrency = resolveRenderConcurrency(job.data.profile);
-  const useSoftwareEncoding = job.hardwareAcceleration === "disable";
+  const useSoftwareEncoding = job.encoder === "software-x264";
+  const hardwareAcceleration = remotionHardwareAcceleration(job.encoder);
+  const ffmpegOverride = job.encoder === "intel-qsv" ? intelQsvOverride(job.data.profile) : undefined;
   let serveUrl: string | null = null;
 
   try {
@@ -193,6 +330,7 @@ async function processJob(jobId: string) {
       inputProps: job.data.props,
       timeoutInMilliseconds: 120_000,
       logLevel: "warn",
+      binariesDirectory: job.binariesDirectory,
     });
 
     await renderMedia({
@@ -206,7 +344,9 @@ async function processJob(jobId: string) {
       audioCodec: "aac",
       audioBitrate: "192K",
       videoBitrate: VIDEO_BITRATES[job.data.profile][job.data.resolution],
-      hardwareAcceleration: job.hardwareAcceleration,
+      hardwareAcceleration,
+      ffmpegOverride,
+      binariesDirectory: job.binariesDirectory,
       x264Preset: useSoftwareEncoding
         ? job.data.profile === "fast"
           ? "veryfast"
@@ -264,6 +404,7 @@ async function processJob(jobId: string) {
 export async function queueRenderJob(data: PreparedRenderJob) {
   await pruneExpiredJobs();
 
+  const selection = resolveEncoderSelection();
   const id = randomUUID();
   const now = Date.now();
   const job: RenderJob = {
@@ -278,7 +419,8 @@ export async function queueRenderJob(data: PreparedRenderJob) {
     outputBytes: null,
     resolvedConcurrency: null,
     parallelEncoding: null,
-    hardwareAcceleration: resolveHardwareAcceleration(),
+    encoder: selection.encoder,
+    binariesDirectory: selection.binariesDirectory,
   };
   runtimeState.jobs.set(id, job);
 
