@@ -159,6 +159,7 @@ export function VideoPreview({
             type="button"
             aria-label={isPlaying ? "Pause preview" : "Play preview"}
             onClick={onTogglePlay}
+            style={{ x: "-50%", y: "-50%" }}
             whileTap={{ scale: 0.92 }}
             initial={{ opacity: 0, scale: 0.82 }}
             animate={{ opacity: 1, scale: 1 }}
