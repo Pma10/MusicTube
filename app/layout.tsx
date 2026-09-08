@@ -1,4 +1,9 @@
 import type { Metadata } from "next";
+import "@fontsource/noto-sans-kr/400.css";
+import "@fontsource/noto-sans-kr/500.css";
+import "@fontsource/noto-sans-kr/600.css";
+import "@fontsource/noto-sans-kr/700.css";
+import "@fontsource/noto-sans-kr/800.css";
 import "./globals.css";
 import "./render.css";
 import "./video-design.css";
