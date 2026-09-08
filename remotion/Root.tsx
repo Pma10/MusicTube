@@ -4,8 +4,7 @@ import type { MusicTubeRenderProps } from "./types";
 
 const defaultProps: MusicTubeRenderProps = {
   title: "Nostalgia",
-  artist: "BIG Naughty",
-  channel: "1H KPOP",
+  artist: "BIG Naughty (서동현)",
   lyrics: "[00:02.00]MusicTube\n[00:06.00]Rendered with Remotion",
   audioPath: "",
   coverPath: null,
