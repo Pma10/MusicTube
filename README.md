@@ -5,7 +5,7 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 ## Features
 
 - 16:9 music-player inspired live preview
-- Genie song search powered by `Pma10/GenieAPI`
+- Genie song search using a native Node.js port of the scraping/parsing logic from `Pma10/GenieAPI`
 - One-click title, artist, album-art and timestamped lyric import from Genie
 - Optional automatic audio lookup through a configured audio resolver
 - Direct HTTPS audio URL import with SSRF/private-network protection and a 160 MB limit
@@ -16,7 +16,7 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 - Soft, Cinema and Minimal motion presets
 - Warm, Cool and Mono visual themes
 - Subtle Ken Burns background/cover motion while playing
-- Editable title, artist and channel text
+- Editable title, artist and channel metadata
 - Local Remotion render queue with live progress and cancellation
 - 1080p, 1440p and 4K H.264 + AAC MP4 output at 60 FPS
 - Direct browser download without buffering the whole MP4 in page memory
@@ -25,7 +25,7 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 
 ## Local setup
 
-Requirements: Node.js 22+, npm and Python 3.11+.
+Requirements: Node.js 22+ and npm. Python is not required.
 
 First-time setup:
 
@@ -33,32 +33,38 @@ First-time setup:
 npm run setup:local
 ```
 
-This installs Node dependencies when needed, creates `.venv`, installs the Genie bridge dependencies and creates `.env.local` from `.env.example` without overwriting an existing file.
+This installs Node dependencies when needed and creates `.env.local` from `.env.example` without overwriting an existing file.
 
-After that, start everything with one command:
+After that, start the studio with one command:
 
 ```bash
 npm run local
 ```
 
-The launcher starts both services locally:
+The launcher starts the MusicTube web UI at `http://127.0.0.1:3000`. Genie search, song detail parsing and timestamped lyrics are handled directly inside the Next.js Node runtime, so there is no FastAPI/uvicorn sidecar or Python virtual environment to keep running.
 
-- MusicTube web UI: `http://127.0.0.1:3000`
-- GenieAPI bridge: `http://127.0.0.1:8765`
+The browser opens automatically. Set `MUSICTUBE_OPEN=0` if you do not want auto-open. Press `Ctrl+C` to stop the local studio.
 
-It opens the browser automatically. Set `MUSICTUBE_OPEN=0` if you do not want auto-open. Press `Ctrl+C` to stop both processes.
-
-You can still run the services manually if you prefer:
+You can also use the regular Next.js command:
 
 ```bash
-# terminal 1
-.venv\Scripts\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8765
-
-# terminal 2
 npm run dev
 ```
 
-On macOS/Linux use `.venv/bin/python` instead.
+## Genie integration
+
+MusicTube contains a TypeScript/Node.js port of the parts of `Pma10/GenieAPI` it needs:
+
+- `/search/searchMain` song search parsing
+- `/detail/songInfo` song metadata parsing
+- `dn.genie.co.kr/app/purchase/get_msl.asp` timestamped lyric parsing
+- Genie image URL normalization and LRC conversion
+
+The public browser UI still calls MusicTube's own `/api/genie/*` routes, but those routes now contact Genie directly from the local Node.js process. Short-lived in-memory caches reduce duplicate scraper requests while typing/selecting songs.
+
+If timed lyrics are unavailable for a track, metadata still loads and the editor can continue with an empty/manual LRC instead of failing the whole song lookup.
+
+> This is still an unofficial Genie integration and depends on the current Genie page/data format. Upstream site changes may occasionally require parser updates.
 
 ## MP4 rendering
 
@@ -78,7 +84,7 @@ Remotion may download its headless Chrome build the first time rendering is used
 
 ## Audio sources
 
-GenieAPI is used for metadata, artwork and synced lyrics. MusicTube does not scrape or bypass a streaming service to obtain protected full-track audio. Instead the editor supports three audio paths:
+Genie is used for metadata, artwork and synced lyrics. MusicTube does not scrape or bypass a streaming service to obtain protected full-track audio. Instead the editor supports three audio paths:
 
 1. **Automatic resolver** — set `MUSICTUBE_AUDIO_RESOLVER_URL` to an audio library/service you control or are licensed to use. After a Genie result is selected, MusicTube sends `provider`, `songId`, `title`, and `artist` as query parameters. Return JSON in this shape:
 
@@ -91,5 +97,3 @@ GenieAPI is used for metadata, artwork and synced lyrics. MusicTube does not scr
 3. **Attachment** — attach or drag an MP3, WAV, M4A, AAC, FLAC, OGG, or OPUS file directly into the editor. You can also attach an `.lrc` file separately.
 
 Only use audio you have the rights or permission to use and publish.
-
-> GenieAPI is an unofficial wrapper around genie.co.kr and depends on the current Genie page/data format. Upstream site changes may occasionally require parser updates.
