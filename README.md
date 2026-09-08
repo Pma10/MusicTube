@@ -16,10 +16,10 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 - Soft, Cinema and Minimal motion presets
 - Warm, Cool and Mono visual themes
 - Subtle Ken Burns background/cover motion while playing
-- Editable title, artist and channel metadata
+- Editable title and actual artist metadata; legacy fake channel/logo metadata has been removed
 - Local Remotion render queue with live progress and cancellation
 - Fast 30 FPS and Quality 60 FPS render profiles
-- Automatic hardware-accelerated H.264 encoding when supported by Remotion
+- Intel Quick Sync, NVIDIA NVENC and Apple VideoToolbox hardware encoding when available
 - CPU-aware render concurrency instead of a fixed four-worker cap
 - 1080p, 1440p and 4K H.264 + AAC MP4 output
 - Direct browser download without buffering the whole MP4 in page memory
@@ -36,7 +36,7 @@ First-time setup:
 npm run setup:local
 ```
 
-This installs Node dependencies when needed and creates `.env.local` from `.env.example` without overwriting an existing file.
+This installs Node dependencies when needed and creates `.env.local` from `.env.example` without overwriting an existing file. On Windows x64 it also prepares a local full FFmpeg build for Intel Quick Sync support. The downloaded binaries are stored under `.musictube/` and are not committed to Git.
 
 After that, start the studio with one command:
 
@@ -46,7 +46,7 @@ npm run local
 
 The launcher starts the MusicTube web UI at `http://127.0.0.1:3000`. Genie search, song detail parsing and timestamped lyrics are handled directly inside the Next.js Node runtime, so there is no FastAPI/uvicorn sidecar or Python virtual environment to keep running.
 
-The browser opens automatically. Set `MUSICTUBE_OPEN=0` if you do not want auto-open. Press `Ctrl+C` to stop the local studio.
+`npm run local` also verifies the Windows acceleration setup. The browser opens automatically. Set `MUSICTUBE_OPEN=0` if you do not want auto-open. Press `Ctrl+C` to stop the local studio.
 
 You can also use the regular Next.js command:
 
@@ -63,7 +63,7 @@ MusicTube contains a TypeScript/Node.js port of the parts of `Pma10/GenieAPI` it
 - `dn.genie.co.kr/app/purchase/get_msl.asp` timestamped lyric parsing
 - Genie image URL normalization and LRC conversion
 
-The public browser UI still calls MusicTube's own `/api/genie/*` routes, but those routes now contact Genie directly from the local Node.js process. Short-lived in-memory caches reduce duplicate scraper requests while typing/selecting songs.
+The browser UI calls MusicTube's own `/api/genie/*` routes, and those routes contact Genie directly from the local Node.js process. Short-lived in-memory caches reduce duplicate scraper requests while typing/selecting songs.
 
 If timed lyrics are unavailable for a track, metadata still loads and the editor can continue with an empty/manual LRC instead of failing the whole song lookup.
 
@@ -71,7 +71,7 @@ If timed lyrics are unavailable for a track, metadata still loads and the editor
 
 ## MP4 rendering
 
-The Export section submits the selected audio, cover art, metadata, LRC lyrics and motion settings to the local render queue. Jobs run sequentially so accidentally clicking render multiple times does not exhaust the machine.
+The Export section submits the selected audio, cover art, title, actual artist, LRC lyrics and motion settings to the local render queue. Jobs run sequentially so accidentally clicking render multiple times does not exhaust the machine.
 
 Available output sizes:
 
@@ -81,20 +81,34 @@ Available output sizes:
 
 Render profiles:
 
-- **Fast** — 30 FPS, `veryfast` software preset when CPU encoding is used, lower target bitrate and hardware acceleration when available. This is the recommended default for long-form music uploads.
-- **Quality** — 60 FPS, higher target bitrate and the `medium` software preset when CPU encoding is used. Use this when motion smoothness matters more than render time.
+- **Fast** — 30 FPS and the recommended default for long-form music uploads. When software encoding is required, x264 uses `veryfast`.
+- **Quality** — 60 FPS and a higher target bitrate. When software encoding is required, x264 uses `medium`.
 
-Remotion is configured with `hardwareAcceleration: "if-possible"`. On supported macOS systems it can use VideoToolbox. On Windows/Linux x64 with a compatible NVIDIA GPU and current drivers, Remotion can use NVENC for H.264. If hardware acceleration is unavailable, rendering automatically falls back to software encoding.
+### Hardware encoder selection
 
-Because hardware encoders do not use CRF in Remotion, MusicTube controls output quality with target video bitrates. Fast uses approximately 8/14/28 Mbps for 1080p/1440p/4K; Quality uses approximately 12/22/45 Mbps.
+MusicTube reports the actual encoder selected for every render job.
 
-Render concurrency now scales with the machine instead of being capped at four workers. Fast mode uses up to eight workers while leaving roughly one logical CPU free; Quality uses up to six workers. To override this manually, set `MUSICTUBE_RENDER_CONCURRENCY` to a value from 1 to 16.
+- **Windows:** NVIDIA NVENC → Intel Quick Sync (`h264_qsv`) → CPU x264
+- **macOS:** Apple VideoToolbox → CPU fallback handled by Remotion when unavailable
+- **Linux:** NVIDIA NVENC → CPU x264
 
-The UI polls real render progress, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
+Intel Quick Sync on Windows uses a full local FFmpeg build because Remotion's built-in Windows/Linux H.264 hardware path is NVENC-oriented. `npm run setup:local`, `npm run setup:accel`, or `npm run local` prepares the local FFmpeg directory and performs a real one-frame `h264_qsv` encode probe. If the probe fails, MusicTube safely falls back instead of reporting acceleration that does not work.
+
+You can force a renderer with `MUSICTUBE_RENDER_ENCODER=auto|qsv|nvenc|x264`. A custom compatible FFmpeg/FFprobe/Remotion binary directory can be supplied with `MUSICTUBE_FFMPEG_BIN_DIR`.
+
+Because hardware encoders do not use CRF in this path, MusicTube controls output quality with target video bitrates. Fast uses approximately 8/14/28 Mbps for 1080p/1440p/4K; Quality uses approximately 12/22/45 Mbps.
+
+Render concurrency scales with the machine instead of being capped at four workers. Fast mode uses up to eight workers while leaving roughly one logical CPU free; Quality uses up to six workers. To override this manually, set `MUSICTUBE_RENDER_CONCURRENCY` to a value from 1 to 16.
+
+The UI polls real render progress, shows the active encoder and worker count, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
 
 Each job gets an isolated operating-system temp directory. Input assets are deleted as soon as rendering finishes; the completed MP4 is kept until download and is then cleaned up. Completed jobs also expire automatically if left unused.
 
-Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. Even with these optimizations, 4K/60 FPS and hour-long videos remain CPU/GPU, RAM and temporary-disk intensive, so Fast 1080p is the practical default for long-form uploads.
+Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. Hardware encoding speeds up H.264 compression, while React/Chromium frame generation still consumes CPU. Fast 1080p remains the practical default for long-form uploads.
+
+## Lyric layout
+
+The browser preview and final Remotion render use the same visual hierarchy: inactive surrounding lyrics are about 20 px at 1080p and the active lyric is about 26 px. The lyric region has a dedicated bounded middle row, so long or three-line lyric windows cannot overlap the playback controls. Before the first timestamp, the first lyric is highlighted as the upcoming line instead of rendering all lines as inactive gray text.
 
 ## Audio sources
 

@@ -240,7 +240,6 @@ export async function POST(request: Request) {
     const props: MusicTubeRenderProps = {
       title,
       artist,
-      channel: bounded(text(form, "channel"), 80, "MUSICTUBE"),
       lyrics: text(form, "lyrics").slice(0, 250_000),
       audioPath: audioFilename,
       coverPath,

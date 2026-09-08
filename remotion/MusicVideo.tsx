@@ -125,6 +125,7 @@ function LyricStack({
 
   if (index < 0) {
     visible = lyrics.slice(0, 3);
+    activeOffset = visible.length ? 0 : -1;
   } else {
     const start = Math.max(0, Math.min(index - 1, Math.max(0, lyrics.length - 3)));
     visible = lyrics.slice(start, start + 3);
@@ -143,7 +144,7 @@ function LyricStack({
         filter: `blur(${Math.max(0, blur)}px)`,
       }}
     >
-      <div style={{ width: "100%", display: "grid", gap: 15, textAlign: "center" }}>
+      <div style={{ width: "100%", display: "grid", gap: 9, textAlign: "center" }}>
         {visible.length ? (
           visible.map((line, visibleIndex) => {
             const isActive = visibleIndex === activeOffset;
@@ -152,10 +153,10 @@ function LyricStack({
                 key={`${line.time}-${line.text}-${visibleIndex}`}
                 style={{
                   padding: "0 8px",
-                  fontSize: isActive ? 32 : 26,
-                  lineHeight: isActive ? 1.32 : 1.35,
+                  fontSize: isActive ? 26 : 20,
+                  lineHeight: isActive ? 1.24 : 1.28,
                   fontWeight: isActive ? 650 : 500,
-                  color: isActive ? "rgba(255,255,255,.98)" : "rgba(255,255,255,.50)",
+                  color: isActive ? "rgba(255,255,255,.98)" : "rgba(255,255,255,.48)",
                   letterSpacing: "-0.035em",
                   overflowWrap: "anywhere",
                   textShadow: isActive
@@ -168,7 +169,7 @@ function LyricStack({
             );
           })
         ) : (
-          <div style={{ fontSize: 26, color: "rgba(255,255,255,.48)" }}>가사가 없습니다.</div>
+          <div style={{ fontSize: 20, color: "rgba(255,255,255,.48)" }}>가사가 없습니다.</div>
         )}
       </div>
     </div>
@@ -194,7 +195,6 @@ export function MusicVideo({
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
-
   const transitionSeconds = motionPreset === "cinematic" ? 0.76 : motionPreset === "minimal" ? 0.3 : 0.52;
   const transitionFrames = Math.max(1, transitionSeconds * fps * motionIntensity);
   const activeStartFrame = activeIndex >= 0 ? Math.round(lyrics[activeIndex].time * fps) : 0;
@@ -325,6 +325,7 @@ export function MusicVideo({
               >
                 <span style={{ fontSize: 20 }}>MUSIC</span>
                 <strong style={{ fontSize: 82, lineHeight: 0.92, letterSpacing: "-.08em" }}>TUBE</strong>
+                <small style={{ marginTop: 16, fontSize: 10, opacity: 0.62 }}>DROP COVER ART</small>
               </div>
             )}
             <div
@@ -344,7 +345,7 @@ export function MusicVideo({
             minWidth: 0,
             height: "81.5%",
             display: "grid",
-            gridTemplateRows: "auto 1fr auto",
+            gridTemplateRows: "auto minmax(0, 1fr) auto",
             alignItems: "start",
             padding: "12px 24px 0 38px",
           }}
@@ -394,8 +395,8 @@ export function MusicVideo({
               position: "relative",
               minHeight: 0,
               width: "100%",
-              paddingRight: 8,
-              transform: "translateY(30px)",
+              padding: "12px 8px 26px 0",
+              overflow: "hidden",
             }}
           >
             {showPrevious ? (
@@ -403,7 +404,7 @@ export function MusicVideo({
                 lyrics={lyrics}
                 index={activeIndex - 1}
                 opacity={1 - easedLineProgress}
-                y={-14 * easedLineProgress * motionIntensity}
+                y={-10 * easedLineProgress * motionIntensity}
                 blur={4 * easedLineProgress}
               />
             ) : null}
@@ -411,12 +412,12 @@ export function MusicVideo({
               lyrics={lyrics}
               index={activeIndex}
               opacity={activeIndex < 0 ? clamp01(frame / transitionFrames) : easedLineProgress}
-              y={(1 - easedLineProgress) * 18 * motionIntensity}
+              y={(1 - easedLineProgress) * 12 * motionIntensity}
               blur={(1 - easedLineProgress) * 5}
             />
           </div>
 
-          <div style={{ width: "100%", alignSelf: "end" }}>
+          <div style={{ width: "100%", alignSelf: "end", paddingTop: 14 }}>
             <div
               style={{
                 display: "grid",

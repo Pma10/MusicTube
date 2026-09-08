@@ -87,9 +87,11 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
       selection.song = {
         ...song,
         ...selection.song,
-        album: selection.song.album || song.album,
-        album_id: selection.song.album_id || song.album_id,
-        thumbnail_url: selection.song.thumbnail_url || song.thumbnail_url,
+        title: selection.song.title?.trim() || song.title,
+        artist: selection.song.artist?.trim() || song.artist,
+        album: selection.song.album?.trim() || song.album,
+        album_id: selection.song.album_id?.trim() || song.album_id,
+        thumbnail_url: selection.song.thumbnail_url?.trim() || song.thumbnail_url,
       };
       onApply(selection);
     } catch (applyError) {
@@ -142,7 +144,7 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
         <div className={styles.empty}>검색 결과가 없습니다.</div>
       ) : null}
 
-      <p className={styles.note}>GenieAPI는 제목 · 아티스트 · 앨범아트 · 타임싱크 가사를 채웁니다. 음원은 연결된 자동 소스가 있으면 함께 가져오고, 없으면 URL이나 파일 첨부를 사용할 수 있습니다.</p>
+      <p className={styles.note}>Genie에서 실제 제목 · 아티스트 · 앨범아트 · 타임싱크 가사를 가져옵니다. 음원은 연결된 자동 소스가 있으면 함께 가져오고, 없으면 URL이나 파일 첨부를 사용할 수 있습니다.</p>
     </div>
   );
 }

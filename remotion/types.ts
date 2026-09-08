@@ -5,7 +5,6 @@ export type RenderProfile = "fast" | "quality";
 export type MusicTubeRenderProps = {
   title: string;
   artist: string;
-  channel: string;
   lyrics: string;
   audioPath: string;
   coverPath: string | null;

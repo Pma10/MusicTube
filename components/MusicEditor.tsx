@@ -29,6 +29,7 @@ const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opu
 type AudioOrigin = "attachment" | "url" | "resolver" | null;
 type RenderResolution = "1080p" | "1440p" | "4k";
 type RenderProfile = "fast" | "quality";
+type RenderEncoder = "intel-qsv" | "nvidia-nvenc" | "apple-videotoolbox" | "software-x264";
 type RenderJob = {
   id: string;
   status: "queued" | "rendering" | "completed" | "failed" | "cancelled";
@@ -40,7 +41,9 @@ type RenderJob = {
   fps: number;
   resolvedConcurrency?: number | null;
   parallelEncoding?: boolean | null;
-  hardwareAcceleration?: "if-possible";
+  hardwareAcceleration?: "enabled" | "disabled";
+  encoder?: RenderEncoder;
+  encoderLabel?: string;
   downloadUrl: string | null;
   outputBytes?: number | null;
 };
@@ -81,8 +84,7 @@ export function MusicEditor() {
   const resolverRequestRef = useRef(0);
 
   const [title, setTitle] = useState("Nostalgia");
-  const [artist, setArtist] = useState("BIG Naughty");
-  const [channel, setChannel] = useState("1H KPOP");
+  const [artist, setArtist] = useState("BIG Naughty (서동현)");
   const [lyricsText, setLyricsText] = useState(SAMPLE_LYRICS);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverFile, setCoverFile] = useState<File | null>(null);
@@ -113,6 +115,7 @@ export function MusicEditor() {
   const renderJobId = renderJob?.id;
   const selectedFps = renderProfile === "quality" ? 60 : 30;
   const activeFps = renderJob?.fps ?? selectedFps;
+  const activeEncoder = renderJob?.encoderLabel ?? "Intel QSV / NVIDIA NVENC / VideoToolbox 자동 감지";
 
   useEffect(() => {
     if (audioUrl || !isPlaying) return;
@@ -269,8 +272,8 @@ export function MusicEditor() {
       URL.revokeObjectURL(coverObjectUrlRef.current);
       coverObjectUrlRef.current = null;
     }
-    setTitle(selection.song.title || title);
-    setArtist(selection.song.artist || artist);
+    setTitle(selection.song.title?.trim() || title);
+    setArtist(selection.song.artist?.trim() || artist);
     setGenieSongId(selection.source.song_id);
     setCoverFile(null);
     if (selection.song.thumbnail_url) {
@@ -304,7 +307,7 @@ export function MusicEditor() {
   const exportProject = () => {
     const project = {
       version: 1,
-      metadata: { title, artist, channel },
+      metadata: { title, artist },
       lyrics: lyricsText,
       appearance: { theme, motionPreset, motionIntensity },
       render: { resolution: renderResolution, profile: renderProfile, fps: selectedFps },
@@ -341,7 +344,6 @@ export function MusicEditor() {
       else if (coverUrl?.startsWith("https://")) form.append("coverUrl", coverUrl);
       form.append("title", title);
       form.append("artist", artist);
-      form.append("channel", channel);
       form.append("lyrics", lyricsText);
       form.append("duration", String(duration));
       form.append("motionPreset", motionPreset);
@@ -426,10 +428,10 @@ export function MusicEditor() {
           </section>
 
           <section className="control-section">
-            <div className="section-title"><span>03</span><div><strong>Metadata</strong><small>영상에 표시할 정보</small></div></div>
+            <div className="section-title"><span>03</span><div><strong>Metadata</strong><small>곡에 표시할 제목과 실제 아티스트</small></div></div>
             <label className="field-label">제목<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-            <label className="field-label">아티스트<input value={artist} onChange={(event) => setArtist(event.target.value)} /></label>
-            <label className="field-label">채널 / 로고 텍스트<input value={channel} onChange={(event) => setChannel(event.target.value)} /></label>
+            <label className="field-label">아티스트<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="Genie에서 실제 아티스트명을 자동으로 불러옵니다" /></label>
+            <div className="helper-row"><span>채널/로고 텍스트는 영상에서 제거됨</span><span>{genieSongId ? "Genie metadata" : "직접 수정 가능"}</span></div>
           </section>
 
           <section className="control-section">
@@ -452,7 +454,7 @@ export function MusicEditor() {
           </section>
 
           <section className="control-section export-section">
-            <div className="section-title"><span>06</span><div><strong>Export</strong><small>H.264 + AAC · GPU 자동 사용</small></div></div>
+            <div className="section-title"><span>06</span><div><strong>Export</strong><small>H.264 + AAC · Intel/NVIDIA/Apple 가속 자동 감지</small></div></div>
             <div className="segmented-control resolution-control">
               {(["fast", "quality"] as RenderProfile[]).map((profile) => <button key={profile} type="button" className={renderProfile === profile ? "active" : ""} disabled={isRendering} onClick={() => setRenderProfile(profile)}>{profile === "fast" ? "Fast · 30 FPS" : "Quality · 60 FPS"}</button>)}
             </div>
@@ -465,16 +467,16 @@ export function MusicEditor() {
             </button>
             {isRendering ? <button className="secondary-button full-button" type="button" onClick={() => void cancelRender()}><X size={15} /> 렌더 취소</button> : null}
             {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="secondary-button full-button" type="button" onClick={downloadRender}><Download size={15} /> 완성 영상 다운로드 {formatBytes(renderJob.outputBytes)}</button> : null}
-            <div className="helper-row"><span>{renderProfile === "fast" ? "30 FPS · veryfast encoder" : "60 FPS · quality encoder"}</span><span>{audioFile ? "GPU/NVENC auto" : "음원 필요"}</span></div>
+            <div className="helper-row"><span>{renderProfile === "fast" ? "30 FPS · 고속 인코딩" : "60 FPS · 품질 인코딩"}</span><span>{audioFile ? activeEncoder : "음원 필요"}</span></div>
             {renderError ? <div className="inline-error">{renderError}</div> : null}
           </section>
         </aside>
 
         <section className="preview-column">
           <div className="preview-toolbar"><div><strong>Preview</strong><span>1920 × 1080 · 16:9</span></div><div className="preview-badges">{genieSongId ? <span>Genie synced</span> : null}{audioOrigin ? <span>{audioOrigin} audio</span> : null}<span>{selectedFps} FPS export</span><span>{renderResolution === "4k" ? "4K export" : `${renderResolution} export`}</span></div></div>
-          <VideoPreview title={title} artist={artist} channel={channel} coverUrl={coverUrl} currentTime={currentTime} duration={duration} isPlaying={isPlaying} lyrics={lyrics} motionPreset={motionPreset} motionIntensity={motionIntensity} theme={theme} onTogglePlay={togglePlay} onSeek={seek} />
+          <VideoPreview title={title} artist={artist} coverUrl={coverUrl} currentTime={currentTime} duration={duration} isPlaying={isPlaying} lyrics={lyrics} motionPreset={motionPreset} motionIntensity={motionIntensity} theme={theme} onTogglePlay={togglePlay} onSeek={seek} />
           <div className={`render-note ${isRendering ? "render-note--active" : ""}`}>
-            <div><strong>{isRendering ? `MP4 렌더링 ${Math.round((renderJob?.progress ?? 0) * 100)}%` : renderJob?.status === "completed" ? "MP4 생성 완료" : "로컬 MP4 생성 준비"}</strong><span>{isRendering ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · ${activeFps} FPS · ${renderJob?.resolvedConcurrency ? `${renderJob.resolvedConcurrency} workers · ` : ""}${renderElapsed}초 경과` : `기본은 Fast 30 FPS이며 NVIDIA GPU가 있으면 NVENC, macOS에서는 VideoToolbox를 자동으로 사용합니다.`}</span></div>
+            <div><strong>{isRendering ? `MP4 렌더링 ${Math.round((renderJob?.progress ?? 0) * 100)}%` : renderJob?.status === "completed" ? "MP4 생성 완료" : "로컬 MP4 생성 준비"}</strong><span>{isRendering ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · ${activeFps} FPS · ${renderJob?.resolvedConcurrency ? `${renderJob.resolvedConcurrency} workers · ` : ""}${activeEncoder} · ${renderElapsed}초 경과` : `Windows는 NVIDIA NVENC → Intel Quick Sync(QSV) → CPU x264 순서로 감지하고, macOS는 VideoToolbox를 사용합니다.`}</span></div>
             {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="coming-pill render-quick-button" type="button" onClick={downloadRender}>Download MP4</button> : <button className="coming-pill render-quick-button" type="button" disabled={isRendering || !audioFile} onClick={() => void renderVideo()}>{isRendering ? "Rendering…" : "Generate MP4"}</button>}
           </div>
         </section>

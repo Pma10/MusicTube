@@ -18,7 +18,6 @@ export type ThemePreset = "warm" | "cool" | "mono";
 type Props = {
   title: string;
   artist: string;
-  channel: string;
   coverUrl: string | null;
   currentTime: number;
   duration: number;
@@ -48,7 +47,9 @@ function formatTime(value: number) {
 }
 
 function visibleLyrics(lyrics: LyricLine[], activeIndex: number) {
-  if (activeIndex < 0) return { lines: lyrics.slice(0, 3), activeOffset: -1 };
+  if (activeIndex < 0) {
+    return { lines: lyrics.slice(0, 3), activeOffset: lyrics.length ? 0 : -1 };
+  }
   const start = Math.max(0, Math.min(activeIndex - 1, Math.max(0, lyrics.length - 3)));
   return { lines: lyrics.slice(start, start + 3), activeOffset: activeIndex - start };
 }
@@ -169,7 +170,7 @@ export function VideoPreview({
           <div
             className="lyrics-stage"
             aria-live="polite"
-            style={{ padding: "10.5% 2% 1.5% 0" }}
+            style={{ padding: "6.2% 1.2% 2.2% 0" }}
           >
             <AnimatePresence mode="wait" initial={false}>
               <motion.div

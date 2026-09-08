@@ -20,7 +20,6 @@ await writeFile(
 const inputProps = {
   title: "Render speed smoke",
   artist: "MusicTube",
-  channel: "",
   lyrics: "[00:00.00]빠른 렌더 테스트",
   audioPath: "",
   coverPath: "cover.svg",
