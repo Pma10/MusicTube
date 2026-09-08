@@ -112,13 +112,11 @@ function LyricStack({
   index,
   opacity,
   y,
-  blur,
 }: {
   lyrics: LyricLine[];
   index: number;
   opacity: number;
   y: number;
-  blur: number;
 }) {
   let visible: LyricLine[];
   let activeOffset = -1;
@@ -141,7 +139,6 @@ function LyricStack({
         placeItems: "center",
         opacity,
         transform: `translateY(${y}px)`,
-        filter: `blur(${Math.max(0, blur)}px)`,
       }}
     >
       <div style={{ width: "100%", display: "grid", gap: 9, textAlign: "center" }}>
@@ -195,7 +192,7 @@ export function MusicVideo({
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
-  const transitionSeconds = motionPreset === "cinematic" ? 0.76 : motionPreset === "minimal" ? 0.3 : 0.52;
+  const transitionSeconds = motionPreset === "cinematic" ? 0.38 : motionPreset === "minimal" ? 0.18 : 0.28;
   const transitionFrames = Math.max(1, transitionSeconds * fps * motionIntensity);
   const activeStartFrame = activeIndex >= 0 ? Math.round(lyrics[activeIndex].time * fps) : 0;
   const lineProgress = activeIndex >= 0
@@ -403,17 +400,15 @@ export function MusicVideo({
               <LyricStack
                 lyrics={lyrics}
                 index={activeIndex - 1}
-                opacity={1 - easedLineProgress}
-                y={-10 * easedLineProgress * motionIntensity}
-                blur={4 * easedLineProgress}
+                opacity={(1 - easedLineProgress) * 0.48}
+                y={-7 * easedLineProgress * motionIntensity}
               />
             ) : null}
             <LyricStack
               lyrics={lyrics}
               index={activeIndex}
-              opacity={activeIndex < 0 ? clamp01(frame / transitionFrames) : easedLineProgress}
-              y={(1 - easedLineProgress) * 12 * motionIntensity}
-              blur={(1 - easedLineProgress) * 5}
+              opacity={activeIndex < 0 ? clamp01(frame / transitionFrames) : 0.72 + easedLineProgress * 0.28}
+              y={(1 - easedLineProgress) * 9 * motionIntensity}
             />
           </div>
 
