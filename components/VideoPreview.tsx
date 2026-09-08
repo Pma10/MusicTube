@@ -77,6 +77,7 @@ export function VideoPreview({
 }: Props) {
   const activeIndex = findActiveLyricIndex(lyrics, currentTime);
   const lyricWindow = visibleLyrics(lyrics, activeIndex);
+  const lyricSlots = [0, 1, 2].map((index) => lyricWindow.lines[index] ?? null);
 
   const transition = {
     soft: { duration: 0.52 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
@@ -85,9 +86,9 @@ export function VideoPreview({
   }[motionPreset];
 
   const lyricTransition = {
-    soft: { duration: 0.28 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
-    cinematic: { duration: 0.38 * motionIntensity, ease: [0.16, 1, 0.3, 1] as const },
-    minimal: { duration: 0.18 * motionIntensity, ease: "easeOut" as const },
+    soft: { duration: 0.24 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
+    cinematic: { duration: 0.32 * motionIntensity, ease: [0.16, 1, 0.3, 1] as const },
+    minimal: { duration: 0.16 * motionIntensity, ease: "easeOut" as const },
   }[motionPreset];
 
   const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
@@ -180,40 +181,40 @@ export function VideoPreview({
           </motion.div>
 
           <div className="lyrics-stage" aria-live="polite">
-            <motion.div className="lyrics-stack" layout transition={{ layout: lyricTransition }}>
-              <AnimatePresence initial={false} mode="popLayout">
-                {lyricWindow.lines.length ? (
-                  lyricWindow.lines.map((line, index) => {
-                    const isActive = index === lyricWindow.activeOffset;
-                    const lengthClass = lyricLengthClass(line.text);
-                    return (
-                      <motion.div
-                        layout="position"
-                        className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}
-                        key={`${line.time}-${line.text}`}
-                        initial={{ opacity: 0, y: 9 * motionIntensity }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -7 * motionIntensity }}
-                        transition={{ ...lyricTransition, layout: lyricTransition }}
-                      >
-                        {line.text || " "}
-                      </motion.div>
-                    );
-                  })
-                ) : (
-                  <motion.div
-                    key="empty-lyrics"
-                    className="lyric-line lyric-line--empty"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={lyricTransition}
-                  >
-                    가사를 입력하면 여기에 표시됩니다.
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
+            <div className="lyrics-stack">
+              {lyricSlots.map((line, index) => {
+                const isActive = index === lyricWindow.activeOffset;
+                return (
+                  <div className="lyric-slot" key={`lyric-slot-${index}`}>
+                    <AnimatePresence initial={false} mode="sync">
+                      {line ? (
+                        <motion.div
+                          className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lyricLengthClass(line.text)}`.trim()}
+                          key={`${line.time}-${line.text}`}
+                          initial={{ opacity: 0, y: 6 * motionIntensity }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -5 * motionIntensity }}
+                          transition={lyricTransition}
+                        >
+                          {line.text || " "}
+                        </motion.div>
+                      ) : lyricWindow.lines.length === 0 && index === 1 ? (
+                        <motion.div
+                          key="empty-lyrics"
+                          className="lyric-line lyric-line--empty"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={lyricTransition}
+                        >
+                          가사를 입력하면 여기에 표시됩니다.
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div className="player-area">
