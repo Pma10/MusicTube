@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { rm, stat } from "node:fs/promises";
-import { cpus } from "node:os";
+import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import { bundle } from "@remotion/bundler";
-import { makeCancelSignal, renderMedia, selectComposition } from "@remotion/renderer";
-import type { MusicTubeRenderProps } from "@/remotion/types";
+import {
+  makeCancelSignal,
+  renderMedia,
+  selectComposition,
+  type Bitrate,
+} from "@remotion/renderer";
+import type { MusicTubeRenderProps, RenderProfile } from "@/remotion/types";
 
 export type RenderResolution = "1080p" | "1440p" | "4k";
 export type RenderJobStatus = "queued" | "rendering" | "completed" | "failed" | "cancelled";
@@ -15,6 +20,7 @@ export type PreparedRenderJob = {
   outputPath: string;
   filename: string;
   resolution: RenderResolution;
+  profile: RenderProfile;
   props: MusicTubeRenderProps;
 };
 
@@ -28,6 +34,8 @@ type RenderJob = {
   data: PreparedRenderJob;
   cancel: (() => void) | null;
   outputBytes: number | null;
+  resolvedConcurrency: number | null;
+  parallelEncoding: boolean | null;
 };
 
 type RenderRuntimeState = {
@@ -52,8 +60,39 @@ const SCALE: Record<RenderResolution, number> = {
   "4k": 2,
 };
 
+const VIDEO_BITRATES: Record<RenderProfile, Record<RenderResolution, Bitrate>> = {
+  fast: {
+    "1080p": "8M",
+    "1440p": "14M",
+    "4k": "28M",
+  },
+  quality: {
+    "1080p": "12M",
+    "1440p": "22M",
+    "4k": "45M",
+  },
+};
+
 const COMPLETED_TTL_MS = 6 * 60 * 60 * 1000;
 const FAILED_TTL_MS = 60 * 60 * 1000;
+
+function renderFps(profile: RenderProfile) {
+  return profile === "quality" ? 60 : 30;
+}
+
+function resolveRenderConcurrency(profile: RenderProfile) {
+  const configured = Number(process.env.MUSICTUBE_RENDER_CONCURRENCY);
+  if (Number.isInteger(configured) && configured > 0) {
+    return Math.max(1, Math.min(16, configured));
+  }
+
+  const cores = Math.max(1, availableParallelism());
+  if (profile === "fast") {
+    return Math.max(1, Math.min(8, cores <= 2 ? cores : cores - 1));
+  }
+
+  return Math.max(1, Math.min(6, Math.ceil(cores * 0.75)));
+}
 
 async function removePath(path: string | null | undefined) {
   if (!path || /^https?:\/\//i.test(path)) return;
@@ -70,6 +109,11 @@ function publicJob(job: RenderJob) {
     error: job.error,
     filename: job.data.filename,
     resolution: job.data.resolution,
+    profile: job.data.profile,
+    fps: renderFps(job.data.profile),
+    resolvedConcurrency: job.resolvedConcurrency,
+    parallelEncoding: job.parallelEncoding,
+    hardwareAcceleration: "if-possible" as const,
     outputBytes: job.outputBytes,
     downloadUrl: job.status === "completed" ? `/api/render/${job.id}/download` : null,
   };
@@ -96,6 +140,7 @@ async function processJob(jobId: string) {
   job.updatedAt = Date.now();
   job.cancel = cancel;
 
+  const concurrency = resolveRenderConcurrency(job.data.profile);
   let serveUrl: string | null = null;
 
   try {
@@ -120,15 +165,25 @@ async function processJob(jobId: string) {
       outputLocation: job.data.outputPath,
       inputProps: job.data.props,
       scale: SCALE[job.data.resolution],
-      crf: 18,
       pixelFormat: "yuv420p",
       audioCodec: "aac",
+      audioBitrate: "192K",
+      videoBitrate: VIDEO_BITRATES[job.data.profile][job.data.resolution],
+      hardwareAcceleration: "if-possible",
+      x264Preset: job.data.profile === "fast" ? "veryfast" : "medium",
       enforceAudioTrack: true,
       overwrite: true,
-      concurrency: Math.max(1, Math.min(4, Math.floor(cpus().length / 2) || 1)),
+      concurrency,
       timeoutInMilliseconds: 120_000,
       logLevel: "warn",
       cancelSignal,
+      onStart: ({ resolvedConcurrency, parallelEncoding }) => {
+        const current = runtimeState.jobs.get(jobId);
+        if (!current) return;
+        current.resolvedConcurrency = resolvedConcurrency;
+        current.parallelEncoding = parallelEncoding;
+        current.updatedAt = Date.now();
+      },
       onProgress: ({ progress }) => {
         const current = runtimeState.jobs.get(jobId);
         if (!current || current.status !== "rendering") return;
@@ -180,6 +235,8 @@ export async function queueRenderJob(data: PreparedRenderJob) {
     data,
     cancel: null,
     outputBytes: null,
+    resolvedConcurrency: null,
+    parallelEncoding: null,
   };
   runtimeState.jobs.set(id, job);
 
