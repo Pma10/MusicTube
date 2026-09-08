@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./render.css";
+import "./video-design.css";
 
 export const metadata: Metadata = {
   title: "MusicTube Studio",
