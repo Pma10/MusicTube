@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { NextResponse } from "next/server";
 import { getRenderJob, queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
-import type { MusicTubeRenderProps, RenderMotionPreset, RenderThemePreset } from "@/remotion/types";
+import type {
+  MusicTubeRenderProps,
+  RenderMotionPreset,
+  RenderProfile,
+  RenderThemePreset,
+} from "@/remotion/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +22,7 @@ const MAX_REDIRECTS = 4;
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"]);
 const RESOLUTIONS = new Set<RenderResolution>(["1080p", "1440p", "4k"]);
+const RENDER_PROFILES = new Set<RenderProfile>(["fast", "quality"]);
 
 function text(form: FormData, key: string, fallback = "") {
   const value = form.get(key);
@@ -191,6 +197,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "지원하지 않는 출력 해상도입니다." }, { status: 400 });
     }
 
+    const profile = text(form, "renderProfile", "fast") as RenderProfile;
+    if (!RENDER_PROFILES.has(profile)) {
+      return NextResponse.json({ error: "지원하지 않는 렌더 프로필입니다." }, { status: 400 });
+    }
+
     const motionPresetRaw = text(form, "motionPreset", "soft");
     const motionPreset: RenderMotionPreset = ["soft", "cinematic", "minimal"].includes(motionPresetRaw)
       ? (motionPresetRaw as RenderMotionPreset)
@@ -237,6 +248,7 @@ export async function POST(request: Request) {
       motionPreset,
       motionIntensity,
       theme,
+      renderProfile: profile,
     };
 
     const job = await queueRenderJob({
@@ -245,6 +257,7 @@ export async function POST(request: Request) {
       outputPath,
       filename: outputFilename(title, artist, resolution),
       resolution,
+      profile,
       props,
     });
 
