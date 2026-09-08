@@ -1,3 +1,0 @@
-fastapi==0.116.1
-uvicorn[standard]==0.35.0
-GenieAPI @ git+https://github.com/Pma10/GenieAPI.git@6c9cfac3d25cf2f8bc48c8b8ebd83f6c03f14c36
