@@ -54,6 +54,10 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[], fall
   return typeof value === "string" && allowed.includes(value as T) ? (value as T) : fallback;
 }
 
+function audioOrigin(value: unknown): ProjectAudioOrigin {
+  return value === "attachment" || value === "url" || value === "resolver" ? value : null;
+}
+
 function finiteNumber(value: unknown, fallback: number | null, min: number, max: number) {
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -110,11 +114,7 @@ export function parseMusicTubeProject(input: unknown): MusicTubeProject {
     },
     media: {
       audioName: nullableString(media.audioName, 255),
-      audioOrigin: enumValue(
-        media.audioOrigin,
-        ["attachment", "url", "resolver", null] as const,
-        null,
-      ),
+      audioOrigin: audioOrigin(media.audioOrigin),
       audioImportUrl: safeHttpsUrl(media.audioImportUrl),
       coverName: nullableString(media.coverName, 255),
       coverUrl: safeHttpsUrl(media.coverUrl),
