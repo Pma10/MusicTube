@@ -17,6 +17,16 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+      - name: Render visual design proof
+        if: github.event_name == 'pull_request'
+        run: npm run design:proof
+      - name: Upload visual design proof
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: musictube-design-proof
+          path: artifacts/design-proof.png
+          retention-days: 3
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
