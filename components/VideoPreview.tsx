@@ -83,7 +83,7 @@ export function VideoPreview({
   return (
     <section className={`video-shell theme-${theme}`}>
       <div
-        className={`ambient-bg ${isPlaying ? "ambient-bg--playing" : ""}`
+        className={`ambient-bg ${isPlaying ? "ambient-bg--playing" : ""}`}
         style={{ backgroundImage: coverUrl ? `url(${coverUrl})` : themeFallback[theme] }}
       />
       <div className="ambient-wash" />
