@@ -12,6 +12,7 @@
     "design:proof": "node scripts/render-design-proof.mjs"
   },
   "dependencies": {
+    "@fontsource/noto-sans-kr": "5.3.0",
     "@remotion/bundler": "4.0.520",
     "@remotion/renderer": "4.0.520",
     "framer-motion": "^12.23.12",
