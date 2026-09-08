@@ -28,6 +28,7 @@ const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opu
 
 type AudioOrigin = "attachment" | "url" | "resolver" | null;
 type RenderResolution = "1080p" | "1440p" | "4k";
+type RenderProfile = "fast" | "quality";
 type RenderJob = {
   id: string;
   status: "queued" | "rendering" | "completed" | "failed" | "cancelled";
@@ -35,6 +36,11 @@ type RenderJob = {
   error: string | null;
   filename: string;
   resolution: RenderResolution;
+  profile: RenderProfile;
+  fps: number;
+  resolvedConcurrency?: number | null;
+  parallelEncoding?: boolean | null;
+  hardwareAcceleration?: "if-possible";
   downloadUrl: string | null;
   outputBytes?: number | null;
 };
@@ -97,6 +103,7 @@ export function MusicEditor() {
   const [motionIntensity, setMotionIntensity] = useState(1);
   const [theme, setTheme] = useState<ThemePreset>("warm");
   const [renderResolution, setRenderResolution] = useState<RenderResolution>("1080p");
+  const [renderProfile, setRenderProfile] = useState<RenderProfile>("fast");
   const [renderJob, setRenderJob] = useState<RenderJob | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [renderElapsed, setRenderElapsed] = useState(0);
@@ -104,6 +111,8 @@ export function MusicEditor() {
   const lyrics = useMemo(() => parseLyrics(lyricsText), [lyricsText]);
   const isRendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
   const renderJobId = renderJob?.id;
+  const selectedFps = renderProfile === "quality" ? 60 : 30;
+  const activeFps = renderJob?.fps ?? selectedFps;
 
   useEffect(() => {
     if (audioUrl || !isPlaying) return;
@@ -298,6 +307,7 @@ export function MusicEditor() {
       metadata: { title, artist, channel },
       lyrics: lyricsText,
       appearance: { theme, motionPreset, motionIntensity },
+      render: { resolution: renderResolution, profile: renderProfile, fps: selectedFps },
       media: { audioName, audioOrigin, coverName },
       source: genieSongId ? { provider: "Genie", songId: genieSongId } : null,
     };
@@ -338,6 +348,7 @@ export function MusicEditor() {
       form.append("motionIntensity", String(motionIntensity));
       form.append("theme", theme);
       form.append("resolution", renderResolution);
+      form.append("renderProfile", renderProfile);
 
       const response = await fetch("/api/render?async=1", { method: "POST", body: form });
       const payload = (await response.json().catch(() => null)) as RenderJob | { error?: string | null } | null;
@@ -441,26 +452,29 @@ export function MusicEditor() {
           </section>
 
           <section className="control-section export-section">
-            <div className="section-title"><span>06</span><div><strong>Export</strong><small>H.264 + AAC · 60 FPS</small></div></div>
+            <div className="section-title"><span>06</span><div><strong>Export</strong><small>H.264 + AAC · GPU 자동 사용</small></div></div>
+            <div className="segmented-control resolution-control">
+              {(["fast", "quality"] as RenderProfile[]).map((profile) => <button key={profile} type="button" className={renderProfile === profile ? "active" : ""} disabled={isRendering} onClick={() => setRenderProfile(profile)}>{profile === "fast" ? "Fast · 30 FPS" : "Quality · 60 FPS"}</button>)}
+            </div>
             <div className="segmented-control resolution-control">
               {(["1080p", "1440p", "4k"] as RenderResolution[]).map((resolution) => <button key={resolution} type="button" className={renderResolution === resolution ? "active" : ""} disabled={isRendering} onClick={() => setRenderResolution(resolution)}>{resolution === "4k" ? "4K" : resolution}</button>)}
             </div>
             <button className="render-button" type="button" disabled={isRendering || !audioFile} onClick={() => void renderVideo()}>
               {isRendering ? <LoaderCircle className="spin-icon" size={18} /> : <Download size={18} />}
-              {isRendering ? `${Math.round((renderJob?.progress ?? 0) * 100)}% · ${renderElapsed}s` : `${renderResolution === "4k" ? "4K" : renderResolution} MP4 생성`}
+              {isRendering ? `${Math.round((renderJob?.progress ?? 0) * 100)}% · ${renderElapsed}s` : `${renderProfile === "fast" ? "Fast" : "Quality"} · ${renderResolution === "4k" ? "4K" : renderResolution} MP4 생성`}
             </button>
             {isRendering ? <button className="secondary-button full-button" type="button" onClick={() => void cancelRender()}><X size={15} /> 렌더 취소</button> : null}
             {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="secondary-button full-button" type="button" onClick={downloadRender}><Download size={15} /> 완성 영상 다운로드 {formatBytes(renderJob.outputBytes)}</button> : null}
-            <div className="helper-row"><span>Remotion + FFmpeg · local queue</span><span>{audioFile ? "render ready" : "음원 필요"}</span></div>
+            <div className="helper-row"><span>{renderProfile === "fast" ? "30 FPS · veryfast encoder" : "60 FPS · quality encoder"}</span><span>{audioFile ? "GPU/NVENC auto" : "음원 필요"}</span></div>
             {renderError ? <div className="inline-error">{renderError}</div> : null}
           </section>
         </aside>
 
         <section className="preview-column">
-          <div className="preview-toolbar"><div><strong>Preview</strong><span>1920 × 1080 · 16:9</span></div><div className="preview-badges">{genieSongId ? <span>Genie synced</span> : null}{audioOrigin ? <span>{audioOrigin} audio</span> : null}<span>60 FPS</span><span>{renderResolution === "4k" ? "4K export" : `${renderResolution} export`}</span></div></div>
+          <div className="preview-toolbar"><div><strong>Preview</strong><span>1920 × 1080 · 16:9</span></div><div className="preview-badges">{genieSongId ? <span>Genie synced</span> : null}{audioOrigin ? <span>{audioOrigin} audio</span> : null}<span>{selectedFps} FPS export</span><span>{renderResolution === "4k" ? "4K export" : `${renderResolution} export`}</span></div></div>
           <VideoPreview title={title} artist={artist} channel={channel} coverUrl={coverUrl} currentTime={currentTime} duration={duration} isPlaying={isPlaying} lyrics={lyrics} motionPreset={motionPreset} motionIntensity={motionIntensity} theme={theme} onTogglePlay={togglePlay} onSeek={seek} />
           <div className={`render-note ${isRendering ? "render-note--active" : ""}`}>
-            <div><strong>{isRendering ? `MP4 렌더링 ${Math.round((renderJob?.progress ?? 0) * 100)}%` : renderJob?.status === "completed" ? "MP4 생성 완료" : "로컬 MP4 생성 준비"}</strong><span>{isRendering ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · 60 FPS · ${renderElapsed}초 경과` : "렌더 작업은 로컬 큐에서 실행되며 완성 파일은 브라우저가 직접 다운로드합니다."}</span></div>
+            <div><strong>{isRendering ? `MP4 렌더링 ${Math.round((renderJob?.progress ?? 0) * 100)}%` : renderJob?.status === "completed" ? "MP4 생성 완료" : "로컬 MP4 생성 준비"}</strong><span>{isRendering ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · ${activeFps} FPS · ${renderJob?.resolvedConcurrency ? `${renderJob.resolvedConcurrency} workers · ` : ""}${renderElapsed}초 경과` : `기본은 Fast 30 FPS이며 NVIDIA GPU가 있으면 NVENC, macOS에서는 VideoToolbox를 자동으로 사용합니다.`}</span></div>
             {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="coming-pill render-quick-button" type="button" onClick={downloadRender}>Download MP4</button> : <button className="coming-pill render-quick-button" type="button" disabled={isRendering || !audioFile} onClick={() => void renderVideo()}>{isRendering ? "Rendering…" : "Generate MP4"}</button>}
           </div>
         </section>

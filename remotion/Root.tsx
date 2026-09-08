@@ -13,6 +13,7 @@ const defaultProps: MusicTubeRenderProps = {
   motionPreset: "soft",
   motionIntensity: 1,
   theme: "warm",
+  renderProfile: "fast",
 };
 
 export function RemotionRoot() {
@@ -22,13 +23,16 @@ export function RemotionRoot() {
       component={MusicVideo}
       width={1920}
       height={1080}
-      fps={60}
-      durationInFrames={60 * 180}
+      fps={30}
+      durationInFrames={30 * 180}
       defaultProps={defaultProps}
-      calculateMetadata={({ props }) => ({
-        durationInFrames: Math.max(1, Math.ceil(Math.min(6 * 60 * 60, props.durationSeconds) * 60)),
-        fps: 60,
-      })}
+      calculateMetadata={({ props }) => {
+        const fps = props.renderProfile === "quality" ? 60 : 30;
+        return {
+          durationInFrames: Math.max(1, Math.ceil(Math.min(6 * 60 * 60, props.durationSeconds) * fps)),
+          fps,
+        };
+      }}
     />
   );
 }

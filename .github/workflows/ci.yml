@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "refactor/**"]
   pull_request:
     branches: [main]
 
@@ -17,6 +17,8 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+      - name: Smoke test fast MP4 render
+        run: npm run render:smoke
       - name: Render visual design proof
         if: github.event_name == 'pull_request'
         run: npm run design:proof
@@ -27,9 +29,3 @@ jobs:
           name: musictube-design-proof
           path: artifacts/design-proof.png
           retention-days: 3
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r backend/requirements.txt
-      - run: python -m compileall -q backend
-      - run: python -c "from backend.main import app; print(app.title)"

@@ -5,7 +5,7 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 ## Features
 
 - 16:9 music-player inspired live preview
-- Genie song search powered by `Pma10/GenieAPI`
+- Genie song search using a native Node.js port of the scraping/parsing logic from `Pma10/GenieAPI`
 - One-click title, artist, album-art and timestamped lyric import from Genie
 - Optional automatic audio lookup through a configured audio resolver
 - Direct HTTPS audio URL import with SSRF/private-network protection and a 160 MB limit
@@ -16,16 +16,19 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 - Soft, Cinema and Minimal motion presets
 - Warm, Cool and Mono visual themes
 - Subtle Ken Burns background/cover motion while playing
-- Editable title, artist and channel text
+- Editable title, artist and channel metadata
 - Local Remotion render queue with live progress and cancellation
-- 1080p, 1440p and 4K H.264 + AAC MP4 output at 60 FPS
+- Fast 30 FPS and Quality 60 FPS render profiles
+- Automatic hardware-accelerated H.264 encoding when supported by Remotion
+- CPU-aware render concurrency instead of a fixed four-worker cap
+- 1080p, 1440p and 4K H.264 + AAC MP4 output
 - Direct browser download without buffering the whole MP4 in page memory
 - Project configuration export as `.musictube.json`
 - Responsive editor UI and reduced-motion accessibility
 
 ## Local setup
 
-Requirements: Node.js 22+, npm and Python 3.11+.
+Requirements: Node.js 22+ and npm. Python is not required.
 
 First-time setup:
 
@@ -33,32 +36,38 @@ First-time setup:
 npm run setup:local
 ```
 
-This installs Node dependencies when needed, creates `.venv`, installs the Genie bridge dependencies and creates `.env.local` from `.env.example` without overwriting an existing file.
+This installs Node dependencies when needed and creates `.env.local` from `.env.example` without overwriting an existing file.
 
-After that, start everything with one command:
+After that, start the studio with one command:
 
 ```bash
 npm run local
 ```
 
-The launcher starts both services locally:
+The launcher starts the MusicTube web UI at `http://127.0.0.1:3000`. Genie search, song detail parsing and timestamped lyrics are handled directly inside the Next.js Node runtime, so there is no FastAPI/uvicorn sidecar or Python virtual environment to keep running.
 
-- MusicTube web UI: `http://127.0.0.1:3000`
-- GenieAPI bridge: `http://127.0.0.1:8765`
+The browser opens automatically. Set `MUSICTUBE_OPEN=0` if you do not want auto-open. Press `Ctrl+C` to stop the local studio.
 
-It opens the browser automatically. Set `MUSICTUBE_OPEN=0` if you do not want auto-open. Press `Ctrl+C` to stop both processes.
-
-You can still run the services manually if you prefer:
+You can also use the regular Next.js command:
 
 ```bash
-# terminal 1
-.venv\Scripts\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8765
-
-# terminal 2
 npm run dev
 ```
 
-On macOS/Linux use `.venv/bin/python` instead.
+## Genie integration
+
+MusicTube contains a TypeScript/Node.js port of the parts of `Pma10/GenieAPI` it needs:
+
+- `/search/searchMain` song search parsing
+- `/detail/songInfo` song metadata parsing
+- `dn.genie.co.kr/app/purchase/get_msl.asp` timestamped lyric parsing
+- Genie image URL normalization and LRC conversion
+
+The public browser UI still calls MusicTube's own `/api/genie/*` routes, but those routes now contact Genie directly from the local Node.js process. Short-lived in-memory caches reduce duplicate scraper requests while typing/selecting songs.
+
+If timed lyrics are unavailable for a track, metadata still loads and the editor can continue with an empty/manual LRC instead of failing the whole song lookup.
+
+> This is still an unofficial Genie integration and depends on the current Genie page/data format. Upstream site changes may occasionally require parser updates.
 
 ## MP4 rendering
 
@@ -70,15 +79,26 @@ Available output sizes:
 - `1440p` — 2560×1440
 - `4K` — 3840×2160
 
-All presets render at 60 FPS to H.264 video with AAC audio. The UI polls real render progress, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
+Render profiles:
+
+- **Fast** — 30 FPS, `veryfast` software preset when CPU encoding is used, lower target bitrate and hardware acceleration when available. This is the recommended default for long-form music uploads.
+- **Quality** — 60 FPS, higher target bitrate and the `medium` software preset when CPU encoding is used. Use this when motion smoothness matters more than render time.
+
+Remotion is configured with `hardwareAcceleration: "if-possible"`. On supported macOS systems it can use VideoToolbox. On Windows/Linux x64 with a compatible NVIDIA GPU and current drivers, Remotion can use NVENC for H.264. If hardware acceleration is unavailable, rendering automatically falls back to software encoding.
+
+Because hardware encoders do not use CRF in Remotion, MusicTube controls output quality with target video bitrates. Fast uses approximately 8/14/28 Mbps for 1080p/1440p/4K; Quality uses approximately 12/22/45 Mbps.
+
+Render concurrency now scales with the machine instead of being capped at four workers. Fast mode uses up to eight workers while leaving roughly one logical CPU free; Quality uses up to six workers. To override this manually, set `MUSICTUBE_RENDER_CONCURRENCY` to a value from 1 to 16.
+
+The UI polls real render progress, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
 
 Each job gets an isolated operating-system temp directory. Input assets are deleted as soon as rendering finishes; the completed MP4 is kept until download and is then cleaned up. Completed jobs also expire automatically if left unused.
 
-Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. 4K/60 FPS and hour-long videos are CPU, RAM and temporary-disk intensive, so 1080p is the practical default for long-form uploads.
+Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. Even with these optimizations, 4K/60 FPS and hour-long videos remain CPU/GPU, RAM and temporary-disk intensive, so Fast 1080p is the practical default for long-form uploads.
 
 ## Audio sources
 
-GenieAPI is used for metadata, artwork and synced lyrics. MusicTube does not scrape or bypass a streaming service to obtain protected full-track audio. Instead the editor supports three audio paths:
+Genie is used for metadata, artwork and synced lyrics. MusicTube does not scrape or bypass a streaming service to obtain protected full-track audio. Instead the editor supports three audio paths:
 
 1. **Automatic resolver** — set `MUSICTUBE_AUDIO_RESOLVER_URL` to an audio library/service you control or are licensed to use. After a Genie result is selected, MusicTube sends `provider`, `songId`, `title`, and `artist` as query parameters. Return JSON in this shape:
 
@@ -91,5 +111,3 @@ GenieAPI is used for metadata, artwork and synced lyrics. MusicTube does not scr
 3. **Attachment** — attach or drag an MP3, WAV, M4A, AAC, FLAC, OGG, or OPUS file directly into the editor. You can also attach an `.lrc` file separately.
 
 Only use audio you have the rights or permission to use and publish.
-
-> GenieAPI is an unofficial wrapper around genie.co.kr and depends on the current Genie page/data format. Upstream site changes may occasionally require parser updates.

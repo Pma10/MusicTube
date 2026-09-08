@@ -48,6 +48,7 @@ const inputProps = {
   motionPreset: "soft",
   motionIntensity: 1,
   theme: "warm",
+  renderProfile: "fast",
 };
 
 let serveUrl;
@@ -70,7 +71,7 @@ try {
     serveUrl,
     output,
     inputProps,
-    frame: 390,
+    frame: 195,
     imageFormat: "png",
     logLevel: "warn",
   });

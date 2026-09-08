@@ -1,0 +1,13 @@
+.lyric-line {
+  font-size: clamp(12px, 1.6vw, 26px);
+  line-height: 1.35;
+}
+
+.lyric-line--active {
+  font-size: clamp(14px, 1.95vw, 32px);
+  line-height: 1.32;
+}
+
+.lyrics-stack {
+  gap: clamp(8px, 0.95vw, 15px);
+}

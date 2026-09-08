@@ -5,36 +5,17 @@ import { spawn, spawnSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const isWindows = process.platform === "win32";
-const venvPython = join(root, ".venv", isWindows ? "Scripts/python.exe" : "bin/python");
 const nextCli = join(root, "node_modules", "next", "dist", "bin", "next");
-const children = new Set();
+let child = null;
 let shuttingDown = false;
 
 function runSetupIfNeeded() {
-  if (existsSync(venvPython) && existsSync(nextCli)) return;
+  if (existsSync(nextCli)) return;
   const result = spawnSync(process.execPath, [join(root, "scripts", "setup-local.mjs")], {
     cwd: root,
     stdio: "inherit",
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
-}
-
-function start(command, args, label, env = {}) {
-  const child = spawn(command, args, {
-    cwd: root,
-    stdio: "inherit",
-    env: { ...process.env, ...env },
-    shell: false,
-  });
-  children.add(child);
-  child.once("exit", (code, signal) => {
-    children.delete(child);
-    if (!shuttingDown && code !== 0) {
-      console.error(`\n${label} 종료: code=${code ?? "null"}, signal=${signal ?? "null"}`);
-      void shutdown(code ?? 1);
-    }
-  });
-  return child;
 }
 
 async function waitFor(url, timeoutMs = 60_000) {
@@ -66,46 +47,43 @@ function openBrowser(url) {
   }
 }
 
-async function terminate(child) {
-  if (!child.pid || child.killed) return;
-  if (isWindows) {
-    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    return;
-  }
-  child.kill("SIGTERM");
-}
-
-async function shutdown(exitCode = 0) {
+function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  await Promise.all([...children].map((child) => terminate(child)));
+  if (child?.pid && !child.killed) {
+    if (isWindows) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    else child.kill("SIGTERM");
+  }
   process.exit(exitCode);
 }
 
-process.once("SIGINT", () => void shutdown(0));
-process.once("SIGTERM", () => void shutdown(0));
+process.once("SIGINT", () => shutdown(0));
+process.once("SIGTERM", () => shutdown(0));
 
 runSetupIfNeeded();
 
 console.log("\nMusicTube Local Studio 시작 중...");
-start(
-  venvPython,
-  ["-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", "8765"],
-  "Genie bridge",
-  { PYTHONUNBUFFERED: "1" },
-);
-start(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--port", "3000"], "Next.js");
+child = spawn(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--port", "3000"], {
+  cwd: root,
+  stdio: "inherit",
+  env: process.env,
+  shell: false,
+});
 
-const [genieReady, webReady] = await Promise.all([
-  waitFor("http://127.0.0.1:8765/health"),
-  waitFor("http://127.0.0.1:3000"),
-]);
+child.once("exit", (code, signal) => {
+  if (!shuttingDown && code !== 0) {
+    console.error(`\nNext.js 종료: code=${code ?? "null"}, signal=${signal ?? "null"}`);
+    shutdown(code ?? 1);
+  }
+});
 
-if (!genieReady || !webReady) {
-  console.error(`\n시작 실패: Genie=${genieReady ? "OK" : "FAIL"}, Web=${webReady ? "OK" : "FAIL"}`);
-  await shutdown(1);
-} else {
-  console.log("\nMusicTube 준비 완료: http://127.0.0.1:3000");
-  console.log("종료하려면 Ctrl+C를 누르세요. 첫 MP4 렌더는 Remotion 브라우저 설치 때문에 조금 더 걸릴 수 있습니다.\n");
-  openBrowser("http://127.0.0.1:3000");
+const ready = await waitFor("http://127.0.0.1:3000");
+if (!ready) {
+  console.error("\n시작 실패: Web=FAIL");
+  shutdown(1);
 }
+
+console.log("\nMusicTube 준비 완료: http://127.0.0.1:3000");
+console.log("Genie 검색/가사는 Next.js가 직접 처리합니다. 별도 Python 서비스가 필요 없습니다.");
+console.log("종료하려면 Ctrl+C를 누르세요. 첫 MP4 렌더는 Remotion 브라우저 설치 때문에 조금 더 걸릴 수 있습니다.\n");
+openBrowser("http://127.0.0.1:3000");

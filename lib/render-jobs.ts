@@ -1,13 +1,20 @@
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { rm, stat } from "node:fs/promises";
-import { cpus } from "node:os";
+import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import { bundle } from "@remotion/bundler";
-import { makeCancelSignal, renderMedia, selectComposition } from "@remotion/renderer";
-import type { MusicTubeRenderProps } from "@/remotion/types";
+import {
+  makeCancelSignal,
+  renderMedia,
+  selectComposition,
+  type Bitrate,
+} from "@remotion/renderer";
+import type { MusicTubeRenderProps, RenderProfile } from "@/remotion/types";
 
 export type RenderResolution = "1080p" | "1440p" | "4k";
 export type RenderJobStatus = "queued" | "rendering" | "completed" | "failed" | "cancelled";
+type HardwareAcceleration = "disable" | "if-possible";
 
 export type PreparedRenderJob = {
   jobRoot: string;
@@ -15,6 +22,7 @@ export type PreparedRenderJob = {
   outputPath: string;
   filename: string;
   resolution: RenderResolution;
+  profile: RenderProfile;
   props: MusicTubeRenderProps;
 };
 
@@ -28,6 +36,9 @@ type RenderJob = {
   data: PreparedRenderJob;
   cancel: (() => void) | null;
   outputBytes: number | null;
+  resolvedConcurrency: number | null;
+  parallelEncoding: boolean | null;
+  hardwareAcceleration: HardwareAcceleration;
 };
 
 type RenderRuntimeState = {
@@ -52,8 +63,72 @@ const SCALE: Record<RenderResolution, number> = {
   "4k": 2,
 };
 
+const VIDEO_BITRATES: Record<RenderProfile, Record<RenderResolution, Bitrate>> = {
+  fast: {
+    "1080p": "8M",
+    "1440p": "14M",
+    "4k": "28M",
+  },
+  quality: {
+    "1080p": "12M",
+    "1440p": "22M",
+    "4k": "45M",
+  },
+};
+
 const COMPLETED_TTL_MS = 6 * 60 * 60 * 1000;
 const FAILED_TTL_MS = 60 * 60 * 1000;
+let cachedHardwareAcceleration: HardwareAcceleration | null = null;
+
+function renderFps(profile: RenderProfile) {
+  return profile === "quality" ? 60 : 30;
+}
+
+function resolveRenderConcurrency(profile: RenderProfile) {
+  const configured = Number(process.env.MUSICTUBE_RENDER_CONCURRENCY);
+  if (Number.isInteger(configured) && configured > 0) {
+    return Math.max(1, Math.min(16, configured));
+  }
+
+  const cores = Math.max(1, availableParallelism());
+  if (profile === "fast") {
+    return Math.max(1, Math.min(8, cores <= 2 ? cores : cores - 1));
+  }
+
+  return Math.max(1, Math.min(6, Math.ceil(cores * 0.75)));
+}
+
+function resolveHardwareAcceleration(): HardwareAcceleration {
+  if (cachedHardwareAcceleration) return cachedHardwareAcceleration;
+
+  if (process.platform === "darwin") {
+    cachedHardwareAcceleration = "if-possible";
+    return cachedHardwareAcceleration;
+  }
+
+  if (process.platform === "win32" || process.platform === "linux") {
+    try {
+      const probe = spawnSync(
+        "nvidia-smi",
+        ["--query-gpu=name", "--format=csv,noheader"],
+        {
+          stdio: "ignore",
+          timeout: 3_000,
+          windowsHide: true,
+        },
+      );
+      if (!probe.error && probe.status === 0) {
+        cachedHardwareAcceleration = "if-possible";
+        return cachedHardwareAcceleration;
+      }
+    } catch {
+      // Fall through to software encoding.
+    }
+  }
+
+  cachedHardwareAcceleration = "disable";
+  return cachedHardwareAcceleration;
+}
 
 async function removePath(path: string | null | undefined) {
   if (!path || /^https?:\/\//i.test(path)) return;
@@ -70,6 +145,11 @@ function publicJob(job: RenderJob) {
     error: job.error,
     filename: job.data.filename,
     resolution: job.data.resolution,
+    profile: job.data.profile,
+    fps: renderFps(job.data.profile),
+    resolvedConcurrency: job.resolvedConcurrency,
+    parallelEncoding: job.parallelEncoding,
+    hardwareAcceleration: job.hardwareAcceleration,
     outputBytes: job.outputBytes,
     downloadUrl: job.status === "completed" ? `/api/render/${job.id}/download` : null,
   };
@@ -96,6 +176,8 @@ async function processJob(jobId: string) {
   job.updatedAt = Date.now();
   job.cancel = cancel;
 
+  const concurrency = resolveRenderConcurrency(job.data.profile);
+  const useSoftwareEncoding = job.hardwareAcceleration === "disable";
   let serveUrl: string | null = null;
 
   try {
@@ -120,15 +202,29 @@ async function processJob(jobId: string) {
       outputLocation: job.data.outputPath,
       inputProps: job.data.props,
       scale: SCALE[job.data.resolution],
-      crf: 18,
       pixelFormat: "yuv420p",
       audioCodec: "aac",
+      audioBitrate: "192K",
+      videoBitrate: VIDEO_BITRATES[job.data.profile][job.data.resolution],
+      hardwareAcceleration: job.hardwareAcceleration,
+      x264Preset: useSoftwareEncoding
+        ? job.data.profile === "fast"
+          ? "veryfast"
+          : "medium"
+        : undefined,
       enforceAudioTrack: true,
       overwrite: true,
-      concurrency: Math.max(1, Math.min(4, Math.floor(cpus().length / 2) || 1)),
+      concurrency,
       timeoutInMilliseconds: 120_000,
       logLevel: "warn",
       cancelSignal,
+      onStart: ({ resolvedConcurrency, parallelEncoding }) => {
+        const current = runtimeState.jobs.get(jobId);
+        if (!current) return;
+        current.resolvedConcurrency = resolvedConcurrency;
+        current.parallelEncoding = parallelEncoding;
+        current.updatedAt = Date.now();
+      },
       onProgress: ({ progress }) => {
         const current = runtimeState.jobs.get(jobId);
         if (!current || current.status !== "rendering") return;
@@ -180,6 +276,9 @@ export async function queueRenderJob(data: PreparedRenderJob) {
     data,
     cancel: null,
     outputBytes: null,
+    resolvedConcurrency: null,
+    parallelEncoding: null,
+    hardwareAcceleration: resolveHardwareAcceleration(),
   };
   runtimeState.jobs.set(id, job);
 
