@@ -162,6 +162,7 @@
 
 .lyrics-stack {
   width: 100%;
+  display: grid;
   gap: clamp(4px, 0.55cqw, 9px);
   text-align: center;
 }
@@ -172,6 +173,12 @@
   color: rgba(255, 255, 255, 0.48);
   font-weight: 500;
   text-shadow: 0 2px 17px rgba(0, 0, 0, 0.22);
+  transition:
+    color 220ms ease,
+    font-size 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    font-weight 220ms ease,
+    text-shadow 220ms ease;
+  will-change: transform, opacity;
 }
 
 .lyric-line--active {
@@ -246,7 +253,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ambient-bg,
-  .timeline-fill {
+  .timeline-fill,
+  .lyric-line {
     transition: none !important;
     animation: none !important;
   }
