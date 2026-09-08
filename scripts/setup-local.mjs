@@ -45,7 +45,8 @@ function findPython() {
 console.log("MusicTube local setup");
 
 if (!existsSync(join(root, "node_modules"))) {
-  run(isWindows ? "npm.cmd" : "npm", ["install"]);
+  if (isWindows) run("cmd.exe", ["/d", "/s", "/c", "npm install"]);
+  else run("npm", ["install"]);
 }
 
 if (!existsSync(venvPython)) {
