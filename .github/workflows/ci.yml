@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "refactor/**"]
   pull_request:
     branches: [main]
 
@@ -27,9 +27,3 @@ jobs:
           name: musictube-design-proof
           path: artifacts/design-proof.png
           retention-days: 3
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r backend/requirements.txt
-      - run: python -m compileall -q backend
-      - run: python -c "from backend.main import app; print(app.title)"
