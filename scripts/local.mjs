@@ -6,12 +6,12 @@ import { spawn, spawnSync } from "node:child_process";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const isWindows = process.platform === "win32";
 const venvPython = join(root, ".venv", isWindows ? "Scripts/python.exe" : "bin/python");
-const npmCommand = isWindows ? "npm.cmd" : "npm";
+const nextCli = join(root, "node_modules", "next", "dist", "bin", "next");
 const children = new Set();
 let shuttingDown = false;
 
 function runSetupIfNeeded() {
-  if (existsSync(venvPython) && existsSync(join(root, "node_modules"))) return;
+  if (existsSync(venvPython) && existsSync(nextCli)) return;
   const result = spawnSync(process.execPath, [join(root, "scripts", "setup-local.mjs")], {
     cwd: root,
     stdio: "inherit",
@@ -37,7 +37,7 @@ function start(command, args, label, env = {}) {
   return child;
 }
 
-async function waitFor(url, timeoutMs = 45_000) {
+async function waitFor(url, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -94,7 +94,7 @@ start(
   "Genie bridge",
   { PYTHONUNBUFFERED: "1" },
 );
-start(npmCommand, ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", "3000"], "Next.js");
+start(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--port", "3000"], "Next.js");
 
 const [genieReady, webReady] = await Promise.all([
   waitFor("http://127.0.0.1:8765/health"),
