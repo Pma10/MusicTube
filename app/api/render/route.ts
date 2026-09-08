@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { NextResponse } from "next/server";
-import { queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
+import { getRenderJob, queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
 import type { MusicTubeRenderProps, RenderMotionPreset, RenderThemePreset } from "@/remotion/types";
 
 export const runtime = "nodejs";
@@ -145,6 +145,17 @@ async function cleanup(path: string) {
   await rm(path, { recursive: true, force: true }).catch(() => undefined);
 }
 
+async function waitForFinishedJob(jobId: string) {
+  while (true) {
+    const current = await getRenderJob(jobId);
+    if (!current) throw new Error("렌더 작업이 사라졌습니다.");
+    if (current.status === "completed") return current;
+    if (current.status === "failed") throw new Error(current.error || "영상 생성에 실패했습니다.");
+    if (current.status === "cancelled") throw new Error("영상 생성이 취소되었습니다.");
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 750));
+  }
+}
+
 export async function POST(request: Request) {
   const jobRoot = join(tmpdir(), `musictube-render-${crypto.randomUUID()}`);
   const publicDir = join(jobRoot, "public");
@@ -237,7 +248,12 @@ export async function POST(request: Request) {
       props,
     });
 
-    return NextResponse.json(job, { status: 202 });
+    const asyncMode = new URL(request.url).searchParams.get("async") === "1";
+    if (asyncMode) return NextResponse.json(job, { status: 202 });
+
+    const completed = await waitForFinishedJob(job.id);
+    if (!completed.downloadUrl) throw new Error("완료된 영상의 다운로드 경로가 없습니다.");
+    return NextResponse.redirect(new URL(completed.downloadUrl, request.url), 303);
   } catch (error) {
     await cleanup(jobRoot);
     const message = error instanceof Error ? error.message : "영상 생성 요청에 실패했습니다.";
