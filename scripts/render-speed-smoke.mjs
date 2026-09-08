@@ -59,7 +59,7 @@ try {
     scale: 0.25,
     pixelFormat: "yuv420p",
     videoBitrate: "1M",
-    hardwareAcceleration: "if-possible",
+    hardwareAcceleration: "disable",
     x264Preset: "veryfast",
     overwrite: true,
     concurrency: 2,
