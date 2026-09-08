@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "setup:local": "node scripts/setup-local.mjs",
+    "local": "node scripts/local.mjs"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.520",
