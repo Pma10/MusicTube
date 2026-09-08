@@ -15,6 +15,15 @@ import type { MusicTubeRenderProps, RenderProfile } from "@/remotion/types";
 
 export type RenderResolution = "1080p" | "1440p" | "4k";
 export type RenderJobStatus = "queued" | "rendering" | "completed" | "failed" | "cancelled";
+export type RenderJobStage =
+  | "queued"
+  | "bundling"
+  | "loading-composition"
+  | "rendering"
+  | "finalizing"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export type RenderEncoder = "intel-qsv" | "nvidia-nvenc" | "apple-videotoolbox" | "software-x264";
 type RemotionHardwareAcceleration = "disable" | "if-possible";
 type FfmpegOverride = (info: { type: "pre-stitcher" | "stitcher"; args: string[] }) => string[];
@@ -37,8 +46,11 @@ export type PreparedRenderJob = {
 type RenderJob = {
   id: string;
   status: RenderJobStatus;
+  stage: RenderJobStage;
   progress: number;
   createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
   updatedAt: number;
   error: string | null;
   data: PreparedRenderJob;
@@ -267,14 +279,45 @@ async function removePath(path: string | null | undefined) {
   await rm(path, { recursive: true, force: true }).catch(() => undefined);
 }
 
+function setJobStage(job: RenderJob, stage: RenderJobStage, progress?: number) {
+  job.stage = stage;
+  if (typeof progress === "number") job.progress = Math.max(0, Math.min(1, progress));
+  job.updatedAt = Date.now();
+}
+
+function queuePosition(job: RenderJob) {
+  if (job.status !== "queued") return 0;
+  let position = 1;
+  for (const current of runtimeState.jobs.values()) {
+    if (current.id === job.id || current.status !== "queued") continue;
+    if (current.createdAt < job.createdAt) position += 1;
+  }
+  return position;
+}
+
+function estimatedRemainingMs(job: RenderJob) {
+  if (job.status !== "rendering" || !job.startedAt || job.progress < 0.12 || job.progress >= 1) return null;
+  const elapsed = Date.now() - job.startedAt;
+  if (elapsed < 1_500) return null;
+  return Math.max(0, Math.round((elapsed / job.progress) * (1 - job.progress)));
+}
+
 function publicJob(job: RenderJob) {
   const accelerated = job.encoder !== "software-x264";
+  const end = job.finishedAt ?? Date.now();
+  const start = job.startedAt ?? job.createdAt;
   return {
     id: job.id,
     status: job.status,
+    stage: job.stage,
     progress: job.progress,
+    queuePosition: queuePosition(job),
     createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
     updatedAt: job.updatedAt,
+    elapsedMs: Math.max(0, end - start),
+    estimatedRemainingMs: estimatedRemainingMs(job),
     error: job.error,
     filename: job.data.filename,
     resolution: job.data.resolution,
@@ -282,11 +325,13 @@ function publicJob(job: RenderJob) {
     fps: renderFps(job.data.profile),
     resolvedConcurrency: job.resolvedConcurrency,
     parallelEncoding: job.parallelEncoding,
-    hardwareAcceleration: accelerated ? "enabled" as const : "disabled" as const,
+    hardwareAcceleration: accelerated ? ("enabled" as const) : ("disabled" as const),
     encoder: job.encoder,
     encoderLabel: ENCODER_LABELS[job.encoder],
     outputBytes: job.outputBytes,
     downloadUrl: job.status === "completed" ? `/api/render/${job.id}/download` : null,
+    downloadExpiresAt: job.status === "completed" ? job.updatedAt + COMPLETED_TTL_MS : null,
+    canCancel: job.status === "queued" || job.status === "rendering",
   };
 }
 
@@ -301,15 +346,19 @@ async function pruneExpiredJobs() {
   }
 }
 
+function isCancelled(jobId: string) {
+  return runtimeState.jobs.get(jobId)?.status === "cancelled";
+}
+
 async function processJob(jobId: string) {
   const job = runtimeState.jobs.get(jobId);
   if (!job || job.status !== "queued") return;
 
   const { cancel, cancelSignal } = makeCancelSignal();
   job.status = "rendering";
-  job.progress = 0;
-  job.updatedAt = Date.now();
+  job.startedAt = Date.now();
   job.cancel = cancel;
+  setJobStage(job, "bundling", 0.01);
 
   const concurrency = resolveRenderConcurrency(job.data.profile);
   const useSoftwareEncoding = job.encoder === "software-x264";
@@ -321,8 +370,15 @@ async function processJob(jobId: string) {
     serveUrl = await bundle({
       entryPoint: resolve(process.cwd(), "remotion", "index.ts"),
       publicDir: job.data.publicDir,
-      onProgress: () => undefined,
+      onProgress: (progress) => {
+        const current = runtimeState.jobs.get(jobId);
+        if (!current || current.status !== "rendering") return;
+        setJobStage(current, "bundling", 0.01 + Math.max(0, Math.min(1, progress)) * 0.07);
+      },
     });
+
+    if (isCancelled(jobId)) return;
+    setJobStage(job, "loading-composition", 0.09);
 
     const composition = await selectComposition({
       serveUrl,
@@ -332,6 +388,9 @@ async function processJob(jobId: string) {
       logLevel: "warn",
       binariesDirectory: job.binariesDirectory,
     });
+
+    if (isCancelled(jobId)) return;
+    setJobStage(job, "rendering", 0.1);
 
     await renderMedia({
       composition,
@@ -368,20 +427,20 @@ async function processJob(jobId: string) {
       onProgress: ({ progress }) => {
         const current = runtimeState.jobs.get(jobId);
         if (!current || current.status !== "rendering") return;
-        current.progress = Math.max(0, Math.min(1, progress));
-        current.updatedAt = Date.now();
+        setJobStage(current, "rendering", 0.1 + Math.max(0, Math.min(1, progress)) * 0.88);
       },
     });
 
     const current = runtimeState.jobs.get(jobId);
     if (!current || current.status === "cancelled") return;
 
+    setJobStage(current, "finalizing", 0.99);
     const info = await stat(job.data.outputPath);
     current.status = "completed";
-    current.progress = 1;
-    current.updatedAt = Date.now();
+    current.finishedAt = Date.now();
     current.cancel = null;
     current.outputBytes = info.size;
+    setJobStage(current, "completed", 1);
 
     await removePath(job.data.publicDir);
   } catch (error) {
@@ -390,13 +449,18 @@ async function processJob(jobId: string) {
 
     if (current.status !== "cancelled") {
       current.status = "failed";
+      current.finishedAt = Date.now();
       current.error = error instanceof Error ? error.message : "영상 생성에 실패했습니다.";
-      current.updatedAt = Date.now();
       current.cancel = null;
+      setJobStage(current, "failed");
+      await removePath(job.data.jobRoot);
     }
-
-    await removePath(job.data.jobRoot);
   } finally {
+    const current = runtimeState.jobs.get(jobId);
+    if (current?.status === "cancelled") {
+      current.finishedAt ??= Date.now();
+      await removePath(job.data.jobRoot);
+    }
     await removePath(serveUrl);
   }
 }
@@ -410,8 +474,11 @@ export async function queueRenderJob(data: PreparedRenderJob) {
   const job: RenderJob = {
     id,
     status: "queued",
+    stage: "queued",
     progress: 0,
     createdAt: now,
+    startedAt: null,
+    finishedAt: null,
     updatedAt: now,
     error: null,
     data,
@@ -440,6 +507,7 @@ export async function getRenderJobFile(jobId: string) {
   await pruneExpiredJobs();
   const job = runtimeState.jobs.get(jobId);
   if (!job || job.status !== "completed") return null;
+  job.updatedAt = Date.now();
   return {
     path: job.data.outputPath,
     filename: job.data.filename,
@@ -452,18 +520,29 @@ export async function cancelRenderJob(jobId: string) {
   if (!job) return false;
   if (["completed", "failed", "cancelled"].includes(job.status)) return false;
 
+  const wasQueued = job.status === "queued";
   job.status = "cancelled";
+  job.stage = "cancelled";
+  job.finishedAt = Date.now();
   job.updatedAt = Date.now();
   job.error = null;
   job.cancel?.();
   job.cancel = null;
-  await removePath(job.data.jobRoot);
+
+  if (wasQueued) await removePath(job.data.jobRoot);
   return true;
 }
 
 export async function cleanupRenderJob(jobId: string) {
   const job = runtimeState.jobs.get(jobId);
-  if (!job) return;
+  if (!job) return false;
+
+  if (job.status === "rendering" || job.status === "queued") {
+    await cancelRenderJob(jobId);
+    return true;
+  }
+
   await removePath(job.data.jobRoot);
   runtimeState.jobs.delete(jobId);
+  return true;
 }
