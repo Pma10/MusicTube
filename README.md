@@ -18,7 +18,10 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 - Subtle Ken Burns background/cover motion while playing
 - Editable title, artist and channel metadata
 - Local Remotion render queue with live progress and cancellation
-- 1080p, 1440p and 4K H.264 + AAC MP4 output at 60 FPS
+- Fast 30 FPS and Quality 60 FPS render profiles
+- Automatic hardware-accelerated H.264 encoding when supported by Remotion
+- CPU-aware render concurrency instead of a fixed four-worker cap
+- 1080p, 1440p and 4K H.264 + AAC MP4 output
 - Direct browser download without buffering the whole MP4 in page memory
 - Project configuration export as `.musictube.json`
 - Responsive editor UI and reduced-motion accessibility
@@ -76,11 +79,22 @@ Available output sizes:
 - `1440p` — 2560×1440
 - `4K` — 3840×2160
 
-All presets render at 60 FPS to H.264 video with AAC audio. The UI polls real render progress, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
+Render profiles:
+
+- **Fast** — 30 FPS, `veryfast` software preset when CPU encoding is used, lower target bitrate and hardware acceleration when available. This is the recommended default for long-form music uploads.
+- **Quality** — 60 FPS, higher target bitrate and the `medium` software preset when CPU encoding is used. Use this when motion smoothness matters more than render time.
+
+Remotion is configured with `hardwareAcceleration: "if-possible"`. On supported macOS systems it can use VideoToolbox. On Windows/Linux x64 with a compatible NVIDIA GPU and current drivers, Remotion can use NVENC for H.264. If hardware acceleration is unavailable, rendering automatically falls back to software encoding.
+
+Because hardware encoders do not use CRF in Remotion, MusicTube controls output quality with target video bitrates. Fast uses approximately 8/14/28 Mbps for 1080p/1440p/4K; Quality uses approximately 12/22/45 Mbps.
+
+Render concurrency now scales with the machine instead of being capped at four workers. Fast mode uses up to eight workers while leaving roughly one logical CPU free; Quality uses up to six workers. To override this manually, set `MUSICTUBE_RENDER_CONCURRENCY` to a value from 1 to 16.
+
+The UI polls real render progress, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
 
 Each job gets an isolated operating-system temp directory. Input assets are deleted as soon as rendering finishes; the completed MP4 is kept until download and is then cleaned up. Completed jobs also expire automatically if left unused.
 
-Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. 4K/60 FPS and hour-long videos are CPU, RAM and temporary-disk intensive, so 1080p is the practical default for long-form uploads.
+Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. Even with these optimizations, 4K/60 FPS and hour-long videos remain CPU/GPU, RAM and temporary-disk intensive, so Fast 1080p is the practical default for long-form uploads.
 
 ## Audio sources
 
