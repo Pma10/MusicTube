@@ -27,6 +27,17 @@ function findFile(directory, targetName) {
   return null;
 }
 
+function hasIntelGraphics() {
+  const command = "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name";
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", command],
+    { encoding: "utf8", timeout: 5_000, windowsHide: true },
+  );
+  if (result.error || result.status !== 0) return true;
+  return /intel|iris|uhd|arc/i.test(result.stdout || "");
+}
+
 function qsvProbe() {
   if (!existsSync(ffmpegExe)) return false;
   const result = spawnSync(
@@ -78,6 +89,11 @@ function extractZip(zipPath, destination) {
 async function main() {
   if (process.env.MUSICTUBE_SKIP_ACCEL_SETUP === "1") return;
   if (process.platform !== "win32" || process.arch !== "x64") return;
+
+  if (!hasIntelGraphics() && process.env.MUSICTUBE_FORCE_ACCEL_SETUP !== "1") {
+    console.log("Intel 그래픽이 감지되지 않아 Quick Sync FFmpeg 준비를 건너뜁니다.");
+    return;
+  }
 
   if (existsSync(ffmpegExe) && existsSync(ffprobeExe) && existsSync(remotionExe)) {
     console.log(qsvProbe()
