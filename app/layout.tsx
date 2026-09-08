@@ -7,6 +7,7 @@ import "@fontsource/noto-sans-kr/800.css";
 import "./globals.css";
 import "./render.css";
 import "./video-design.css";
+import "./video-tuning.css";
 
 export const metadata: Metadata = {
   title: "MusicTube Studio",
