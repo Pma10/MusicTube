@@ -39,11 +39,14 @@ const bloom: Record<RenderThemePreset, string> = {
 
 function parseLrc(input: string): LyricLine[] {
   const lines: LyricLine[] = [];
+
   for (const rawLine of input.split(/\r?\n/)) {
     const matches = [...rawLine.matchAll(/\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g)];
     if (!matches.length) continue;
+
     const lastMatch = matches.at(-1);
     const text = rawLine.slice((lastMatch?.index ?? 0) + (lastMatch?.[0].length ?? 0)).trim();
+
     for (const match of matches) {
       const minutes = Number(match[1]);
       const seconds = Number(match[2]);
@@ -52,6 +55,7 @@ function parseLrc(input: string): LyricLine[] {
       }
     }
   }
+
   return lines.sort((a, b) => a.time - b.time);
 }
 
@@ -67,6 +71,7 @@ function formatTime(value: number) {
   const hours = Math.floor(safe / 3600);
   const minutes = Math.floor((safe % 3600) / 60);
   const seconds = Math.floor(safe % 60);
+
   return hours > 0
     ? `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
     : `${minutes}:${seconds.toString().padStart(2, "0")}`;
@@ -78,10 +83,10 @@ function clamp01(value: number) {
 
 function titleFontSize(value: string) {
   const length = [...value].length;
-  if (length <= 12) return 72;
-  if (length <= 18) return 64;
-  if (length <= 26) return 56;
-  return 50;
+  if (length <= 12) return 64;
+  if (length <= 18) return 58;
+  if (length <= 26) return 52;
+  return 46;
 }
 
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
@@ -103,34 +108,8 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
         placeItems: "center",
         color: "rgba(255,255,255,.78)",
       };
-  return <div style={style}>{children}</div>;
-}
 
-function BrandOrbit() {
-  return (
-    <svg
-      viewBox="0 0 100 100"
-      style={{
-        position: "absolute",
-        width: 78,
-        height: 78,
-        left: "calc(100% - 4px)",
-        top: "50%",
-        transform: "translateY(-50%) rotate(-26deg)",
-        overflow: "visible",
-        opacity: 0.86,
-      }}
-    >
-      <defs>
-        <path id="render-brand-orbit" d="M50 50m-34 0a34 34 0 1 1 68 0a34 34 0 1 1-68 0" />
-      </defs>
-      <text fill="rgba(251,248,220,.9)" fontSize="8" fontWeight="700" letterSpacing="1.2">
-        <textPath href="#render-brand-orbit" startOffset="2%">
-          PLAYING · MUSIC · LOOP · PLAYING · MUSIC ·
-        </textPath>
-      </text>
-    </svg>
-  );
+  return <div style={style}>{children}</div>;
 }
 
 function LyricStack({
@@ -169,7 +148,15 @@ function LyricStack({
         filter: `blur(${Math.max(0, blur)}px)`,
       }}
     >
-      <div style={{ width: "100%", display: "grid", gap: 14, textAlign: "center" }}>
+      <div
+        style={{
+          width: "100%",
+          display: "grid",
+          gap: 15,
+          textAlign: "center",
+          padding: "0 20px",
+        }}
+      >
         {visible.length ? (
           visible.map((line, visibleIndex) => {
             const isActive = visibleIndex === activeOffset;
@@ -202,7 +189,6 @@ function LyricStack({
 export function MusicVideo({
   title,
   artist,
-  channel,
   lyrics: lyricSource,
   audioPath,
   coverPath,
@@ -218,22 +204,28 @@ export function MusicVideo({
   const activeIndex = findActiveLyricIndex(lyrics, seconds);
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
-  const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
-  const edgeControlIntro = spring({ frame: Math.max(0, frame - 18), fps, config: { damping: 18, stiffness: 95 } });
+  const titleIntro = spring({
+    frame: Math.max(0, frame - 8),
+    fps,
+    config: { damping: 20, stiffness: 72 },
+  });
 
-  const transitionSeconds = motionPreset === "cinematic" ? 0.76 : motionPreset === "minimal" ? 0.3 : 0.52;
+  const transitionSeconds =
+    motionPreset === "cinematic" ? 0.76 : motionPreset === "minimal" ? 0.3 : 0.52;
   const transitionFrames = Math.max(1, transitionSeconds * fps * motionIntensity);
   const activeStartFrame = activeIndex >= 0 ? Math.round(lyrics[activeIndex].time * fps) : 0;
-  const lineProgress = activeIndex >= 0
-    ? clamp01((frame - activeStartFrame) / transitionFrames)
-    : clamp01(frame / transitionFrames);
+  const lineProgress =
+    activeIndex >= 0
+      ? clamp01((frame - activeStartFrame) / transitionFrames)
+      : clamp01(frame / transitionFrames);
   const easedLineProgress = 1 - Math.pow(1 - lineProgress, 3);
   const showPrevious = activeIndex > 0 && lineProgress < 1;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
   const coverScale = 1 + Math.sin(cycle * 0.49) * 0.007 * motionAmount + 0.008 * motionAmount;
-  const coverRotate = motionPreset === "cinematic" ? Math.sin(cycle * 0.32) * 0.14 * motionIntensity : 0;
+  const coverRotate =
+    motionPreset === "cinematic" ? Math.sin(cycle * 0.32) * 0.14 * motionIntensity : 0;
   const backgroundScale = 1.16 + Math.sin(cycle * 0.16) * 0.018 * motionAmount;
   const backgroundX = Math.sin(cycle * 0.12) * 13 * motionAmount;
   const backgroundY = Math.cos(cycle * 0.1) * 9 * motionAmount;
@@ -269,7 +261,8 @@ export function MusicVideo({
         style={{
           position: "absolute",
           inset: 0,
-          background: "radial-gradient(ellipse at center, transparent 46%, rgba(7,8,7,.22) 79%, rgba(4,5,4,.42) 100%)",
+          background:
+            "radial-gradient(ellipse at center, transparent 46%, rgba(7,8,7,.22) 79%, rgba(4,5,4,.42) 100%)",
         }}
       />
       <div
@@ -296,22 +289,6 @@ export function MusicVideo({
       <div
         style={{
           position: "absolute",
-          left: 70,
-          top: 58,
-          opacity: intro,
-          transform: `translateY(${interpolate(intro, [0, 1], [-12, 0])}px)`,
-          color: "rgba(251,248,220,.96)",
-          textShadow: "0 2px 12px rgba(0,0,0,.14)",
-          zIndex: 3,
-        }}
-      >
-        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.052em" }}>{channel || "MUSICTUBE"}</div>
-        <BrandOrbit />
-      </div>
-
-      <div
-        style={{
-          position: "absolute",
           top: 58,
           right: 64,
           zIndex: 3,
@@ -333,7 +310,7 @@ export function MusicVideo({
           display: "grid",
           gridTemplateColumns: "50.5% 49.5%",
           alignItems: "center",
-          padding: "105px 140px 74px 124px",
+          padding: "104px 118px 72px 118px",
         }}
       >
         <div style={{ width: "100%", display: "flex", alignItems: "center", position: "relative" }}>
@@ -361,46 +338,25 @@ export function MusicVideo({
                   flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  background: "linear-gradient(145deg, rgba(255,255,255,.17), transparent 40%), linear-gradient(135deg,#b8ae86,#7b765e 47%,#4a5148)",
+                  background:
+                    "linear-gradient(145deg, rgba(255,255,255,.17), transparent 40%), linear-gradient(135deg,#b8ae86,#7b765e 47%,#4a5148)",
                   letterSpacing: ".12em",
                 }}
               >
                 <span style={{ fontSize: 20 }}>MUSIC</span>
-                <strong style={{ fontSize: 82, lineHeight: .92, letterSpacing: "-.08em" }}>TUBE</strong>
+                <strong style={{ fontSize: 82, lineHeight: 0.92, letterSpacing: "-.08em" }}>TUBE</strong>
               </div>
             )}
             <div
               style={{
                 position: "absolute",
                 inset: 0,
-                background: "linear-gradient(145deg, rgba(255,255,255,.055), transparent 24%, transparent 72%, rgba(0,0,0,.08)), linear-gradient(180deg, transparent 72%, rgba(0,0,0,.07))",
+                background:
+                  "linear-gradient(145deg, rgba(255,255,255,.055), transparent 24%, transparent 72%, rgba(0,0,0,.08)), linear-gradient(180deg, transparent 72%, rgba(0,0,0,.07))",
                 mixBlendMode: "soft-light",
                 boxShadow: "inset 0 0 0 1px rgba(255,255,255,.045)",
               }}
             />
-          </div>
-
-          <div
-            style={{
-              position: "absolute",
-              zIndex: 5,
-              left: "83.5%",
-              top: "50%",
-              width: 86,
-              height: 86,
-              borderRadius: "50%",
-              border: "1px solid rgba(255,255,255,.16)",
-              background: "rgba(31,33,29,.72)",
-              color: "rgba(255,255,255,.96)",
-              display: "grid",
-              placeItems: "center",
-              boxShadow: "0 14px 36px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.1)",
-              backdropFilter: "blur(15px) saturate(.9)",
-              opacity: edgeControlIntro,
-              transform: `translate(-50%, -50%) scale(${interpolate(edgeControlIntro, [0, 1], [0.82, 1])})`,
-            }}
-          >
-            <Pause size={34} fill="currentColor" strokeWidth={1.7} />
           </div>
         </div>
 
@@ -411,47 +367,58 @@ export function MusicVideo({
             display: "grid",
             gridTemplateRows: "auto 1fr auto",
             alignItems: "start",
-            padding: "12px 4px 0 42px",
+            padding: "12px 24px 0 38px",
           }}
         >
           <div
             style={{
               opacity: titleIntro,
               transform: `translateY(${interpolate(titleIntro, [0, 1], [26, 0])}px)`,
+              minWidth: 0,
             }}
           >
             <div
               style={{
-                maxWidth: "96%",
+                maxWidth: "100%",
+                paddingRight: 26,
                 fontSize: titleFontSize(displayTitle),
-                lineHeight: .98,
+                lineHeight: 1.03,
                 fontWeight: 800,
-                letterSpacing: "-.062em",
+                letterSpacing: "-.052em",
                 textShadow: "0 4px 22px rgba(0,0,0,.2)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+                whiteSpace: "normal",
+                overflowWrap: "anywhere",
               }}
             >
               {displayTitle}
             </div>
             <div
               style={{
+                maxWidth: "100%",
+                paddingRight: 26,
                 marginTop: 16,
                 fontSize: 28,
+                lineHeight: 1.22,
                 fontWeight: 500,
                 color: "rgba(255,255,255,.84)",
                 letterSpacing: "-.03em",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+                whiteSpace: "normal",
+                overflowWrap: "anywhere",
               }}
             >
               {artist || "Unknown Artist"}
             </div>
           </div>
 
-          <div style={{ position: "relative", minHeight: 0, width: "100%", paddingRight: 10 }}>
+          <div
+            style={{
+              position: "relative",
+              minHeight: 0,
+              width: "100%",
+              paddingRight: 8,
+              transform: "translateY(28px)",
+            }}
+          >
             {showPrevious ? (
               <LyricStack
                 lyrics={lyrics}
@@ -471,7 +438,15 @@ export function MusicVideo({
           </div>
 
           <div style={{ width: "100%", alignSelf: "end" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", justifyContent: "center", alignItems: "center", gap: 41 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(5, auto)",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 41,
+              }}
+            >
               <ControlIcon><Heart size={32} strokeWidth={1.65} /></ControlIcon>
               <ControlIcon><SkipBack size={32} fill="currentColor" strokeWidth={1.65} /></ControlIcon>
               <ControlIcon primary><Pause size={37} fill="currentColor" strokeWidth={1.7} /></ControlIcon>
@@ -492,8 +467,28 @@ export function MusicVideo({
             >
               <span>{formatTime(seconds)}</span>
               <div style={{ position: "relative", height: 12 }}>
-                <div style={{ position: "absolute", left: 0, right: 0, top: 5.25, height: 1.5, borderRadius: 99, background: "rgba(255,255,255,.18)" }} />
-                <div style={{ position: "absolute", left: 0, top: 5.25, height: 1.5, width: `${Math.max(0, Math.min(100, progress * 100))}%`, borderRadius: 99, background: "rgba(255,255,255,.88)" }} />
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    top: 5.25,
+                    height: 1.5,
+                    borderRadius: 99,
+                    background: "rgba(255,255,255,.18)",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 5.25,
+                    height: 1.5,
+                    width: `${Math.max(0, Math.min(100, progress * 100))}%`,
+                    borderRadius: 99,
+                    background: "rgba(255,255,255,.88)",
+                  }}
+                />
                 <div
                   style={{
                     position: "absolute",
