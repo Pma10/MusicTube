@@ -1,6 +1,7 @@
-const GENIE_API_URL = process.env.GENIE_API_URL ?? "http://127.0.0.1:8765";
+import { genieSongUrl, getGenieLyrics, getGenieSongDetail } from "@/lib/genie";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET(
   _request: Request,
@@ -13,23 +14,31 @@ export async function GET(
   }
 
   try {
-    const response = await fetch(new URL(`/songs/${id}`, GENIE_API_URL), {
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      return Response.json(
-        { error: payload?.detail ?? "곡 정보를 불러오지 못했습니다." },
-        { status: response.status },
-      );
+    const detail = await getGenieSongDetail(id);
+    if (!detail) {
+      return Response.json({ error: "곡 정보를 찾지 못했습니다." }, { status: 404 });
     }
 
-    return Response.json(payload);
-  } catch {
+    let lrc = "";
+    try {
+      lrc = await getGenieLyrics(id);
+    } catch (error) {
+      console.warn(`[Genie] lyrics unavailable for ${id}`, error);
+    }
+
+    return Response.json({
+      song: detail,
+      lrc,
+      source: {
+        provider: "Genie",
+        song_id: id,
+        url: genieSongUrl(id),
+      },
+    });
+  } catch (error) {
+    console.error(`[Genie] song lookup failed for ${id}`, error);
     return Response.json(
-      { error: "GenieAPI 서비스에 연결할 수 없습니다." },
+      { error: "곡 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요." },
       { status: 502 },
     );
   }
