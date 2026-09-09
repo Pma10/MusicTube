@@ -7,6 +7,8 @@ export const MAX_REMOTE_AUDIO_BYTES = 160 * 1024 * 1024;
 export const MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024;
 
 const MAX_REDIRECTS = 4;
+const RESPONSE_HEADER_TIMEOUT_MS = 30_000;
+const BODY_IDLE_TIMEOUT_MS = 60_000;
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"]);
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
@@ -183,6 +185,27 @@ export function remoteFilename(url: URL, fallback: string) {
   return safe || fallback;
 }
 
+async function fetchHeaders(url: URL, headers: Record<string, string>) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESPONSE_HEADER_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      redirect: "manual",
+      cache: "no-store",
+      headers,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new RemoteMediaError("원격 미디어 서버 응답 시간이 초과되었습니다.", 504);
+    }
+    const message = error instanceof Error ? error.message : "원격 미디어 요청에 실패했습니다.";
+    throw new RemoteMediaError(message, 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function fetchRemoteMedia(rawUrl: string, options: FetchRemoteOptions) {
   let current: URL;
   try {
@@ -202,18 +225,7 @@ export async function fetchRemoteMedia(rawUrl: string, options: FetchRemoteOptio
     };
     if (options.range) headers.Range = options.range;
 
-    let response: Response;
-    try {
-      response = await fetch(current, {
-        redirect: "manual",
-        cache: "no-store",
-        headers,
-        signal: AbortSignal.timeout(30_000),
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "원격 미디어 요청에 실패했습니다.";
-      throw new RemoteMediaError(message, 502);
-    }
+    const response = await fetchHeaders(current, headers);
 
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
@@ -228,6 +240,34 @@ export async function fetchRemoteMedia(rawUrl: string, options: FetchRemoteOptio
   }
 
   throw new RemoteMediaError("원격 미디어 리다이렉트 횟수가 너무 많습니다.", 502);
+}
+
+function readWithIdleTimeout(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new RemoteMediaError("원격 미디어 전송이 너무 오래 멈춰 있습니다.", 504)),
+      BODY_IDLE_TIMEOUT_MS,
+    );
+    reader.read().then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function writeAll(handle: Awaited<ReturnType<typeof open>>, data: Uint8Array) {
+  let offset = 0;
+  while (offset < data.byteLength) {
+    const { bytesWritten } = await handle.write(data, offset, data.byteLength - offset);
+    if (bytesWritten <= 0) throw new Error("원격 미디어 파일 쓰기가 중단되었습니다.");
+    offset += bytesWritten;
+  }
 }
 
 async function streamResponseToFile(input: {
@@ -249,16 +289,17 @@ async function streamResponseToFile(input: {
   let bytes = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdleTimeout(reader);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxBytes) {
         await reader.cancel("MusicTube remote media limit exceeded").catch(() => undefined);
         throw new RemoteMediaError(tooLargeMessage, 413);
       }
-      await handle.write(value);
+      await writeAll(handle, value);
     }
   } catch (error) {
+    await reader.cancel("MusicTube remote media download aborted").catch(() => undefined);
     await rm(path, { force: true }).catch(() => undefined);
     throw error;
   } finally {
