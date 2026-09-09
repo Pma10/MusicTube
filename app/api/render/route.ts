@@ -10,6 +10,11 @@ import {
   parseRenderMultipart,
   RenderMultipartError,
 } from "@/lib/render-multipart";
+import {
+  checkRenderStorage,
+  cleanupStaleRenderDirectories,
+  RenderStorageError,
+} from "@/lib/render-storage";
 import type {
   MusicTubeRenderProps,
   RenderMotionPreset,
@@ -157,6 +162,7 @@ export async function POST(request: Request) {
   const outputPath = join(jobRoot, "video.mp4");
 
   try {
+    await cleanupStaleRenderDirectories();
     await mkdir(publicDir, { recursive: true });
     const { fields, audio, cover } = await parseRenderMultipart(request, publicDir);
 
@@ -174,6 +180,13 @@ export async function POST(request: Request) {
     if (!RENDER_PROFILES.has(profile)) {
       return NextResponse.json({ error: "지원하지 않는 렌더 프로필입니다." }, { status: 400 });
     }
+
+    await checkRenderStorage({
+      durationSeconds,
+      resolution,
+      profile,
+      audioBytes: audio.bytes,
+    });
 
     const motionPresetRaw = text(fields, "motionPreset", "soft");
     const motionPreset: RenderMotionPreset = ["soft", "cinematic", "minimal"].includes(motionPresetRaw)
@@ -233,7 +246,8 @@ export async function POST(request: Request) {
   } catch (error) {
     await cleanup(jobRoot);
     const message = error instanceof Error ? error.message : "영상 생성 요청에 실패했습니다.";
-    const status = error instanceof RenderMultipartError ? error.status : 500;
+    const status =
+      error instanceof RenderMultipartError || error instanceof RenderStorageError ? error.status : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
