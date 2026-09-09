@@ -32,6 +32,7 @@ const SAMPLE_LYRICS = `[00:02.00]오래된 장면 끝에 멈춰 선 밤
 [00:14.60]우리는 그때의 온도를 기억해`;
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"];
 const PROJECT_DRAFT_KEY = "musictube:project:draft:v2";
+const RENDER_JOB_KEY = "musictube:render:last-job:v1";
 
 type AudioOrigin = "attachment" | "url" | "resolver" | null;
 type RenderResolution = "1080p" | "1440p" | "4k";
@@ -89,6 +90,10 @@ function filenameFromUrl(value: string) {
   } catch {
     return "remote-audio";
   }
+}
+
+function remoteAudioProxyUrl(value: string) {
+  return `/api/media/import?url=${encodeURIComponent(value)}`;
 }
 
 function formatBytes(value?: number | null) {
@@ -171,6 +176,11 @@ export function MusicEditor() {
   const activeFps = renderJob?.fps ?? selectedFps;
   const activeEncoder = renderJob?.encoderLabel ?? "Intel QSV / NVIDIA NVENC / VideoToolbox 자동 감지";
   const renderEta = formatDurationMs(renderJob?.estimatedRemainingMs);
+  const renderElapsedSeconds = renderJob?.elapsedMs
+    ? Math.max(0, Math.floor(renderJob.elapsedMs / 1000))
+    : renderElapsed;
+  const hasRemoteAudio = Boolean(audioImportUrl.startsWith("https://") && (audioOrigin === "url" || audioOrigin === "resolver"));
+  const hasRenderableAudio = Boolean(audioFile || hasRemoteAudio);
 
   const applyProject = useCallback((project: MusicTubeProject, restored = false) => {
     resolverRequestRef.current += 1;
@@ -196,11 +206,17 @@ export function MusicEditor() {
     setRenderProfile(project.render.profile);
     setGenieSongId(project.source?.provider === "Genie" ? project.source.songId : null);
 
-    setAudioUrl(null);
+    const remoteAudioUrl = project.media.audioImportUrl;
+    const restoredOrigin: AudioOrigin = remoteAudioUrl
+      ? project.media.audioOrigin === "resolver"
+        ? "resolver"
+        : "url"
+      : null;
+    setAudioUrl(remoteAudioUrl ? remoteAudioProxyUrl(remoteAudioUrl) : null);
     setAudioFile(null);
     setAudioName(project.media.audioName);
-    setAudioOrigin(null);
-    setAudioImportUrl(project.media.audioImportUrl ?? "");
+    setAudioOrigin(restoredOrigin);
+    setAudioImportUrl(remoteAudioUrl ?? "");
     setCoverFile(null);
     setCoverUrl(project.media.coverUrl);
     setCoverName(project.media.coverName);
@@ -210,12 +226,14 @@ export function MusicEditor() {
     setRenderJob(null);
     setRenderError(null);
     setMediaError(null);
+
+    const loadedLabel = restored ? "자동 저장본을 복원했습니다." : "프로젝트를 불러왔습니다.";
     setProjectNotice(
-      project.media.audioName
-        ? `${restored ? "자동 저장본을 복원했습니다." : "프로젝트를 불러왔습니다."} 음원 파일 “${project.media.audioName}”은 다시 첨부해 주세요.`
-        : restored
-          ? "자동 저장본을 복원했습니다."
-          : "프로젝트를 불러왔습니다.",
+      remoteAudioUrl
+        ? `${loadedLabel} 원격 음원 연결도 다시 연결했습니다.`
+        : project.media.audioName
+          ? `${loadedLabel} 음원 파일 “${project.media.audioName}”은 다시 첨부해 주세요.`
+          : loadedLabel,
     );
   }, []);
 
@@ -269,6 +287,43 @@ export function MusicEditor() {
       setProjectHydrated(true);
     }
   }, [applyProject]);
+
+  useEffect(() => {
+    let active = true;
+    const savedJobId = window.localStorage.getItem(RENDER_JOB_KEY);
+    if (!savedJobId) return () => { active = false; };
+
+    void fetch(`/api/render/${encodeURIComponent(savedJobId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          window.localStorage.removeItem(RENDER_JOB_KEY);
+          return null;
+        }
+        return (await response.json()) as RenderJob;
+      })
+      .then((job) => {
+        if (!active || !job) return;
+        setRenderJob(job);
+        if (job.status === "failed") setRenderError(job.error || "영상 생성에 실패했습니다.");
+        if (job.status === "cancelled") setRenderError("영상 생성이 취소되었습니다.");
+      })
+      .catch(() => {
+        if (active) window.localStorage.removeItem(RENDER_JOB_KEY);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!renderJob) return;
+    if (renderJob.status === "failed" || renderJob.status === "cancelled") {
+      window.localStorage.removeItem(RENDER_JOB_KEY);
+      return;
+    }
+    window.localStorage.setItem(RENDER_JOB_KEY, renderJob.id);
+  }, [renderJob]);
 
   useEffect(() => {
     if (!projectHydrated) return;
@@ -366,6 +421,7 @@ export function MusicEditor() {
     setAudioFile(file);
     setAudioName(file.name);
     setAudioOrigin(origin);
+    if (origin === "attachment") setAudioImportUrl("");
     setCurrentTime(0);
     setIsPlaying(false);
     setMediaError(null);
@@ -397,7 +453,13 @@ export function MusicEditor() {
     }
   };
 
-  const importAudioFromUrl = async (rawUrl: string, suggestedFilename?: string | null, origin: AudioOrigin = "url", quiet = false) => {
+  const importAudioFromUrl = async (
+    rawUrl: string,
+    suggestedFilename?: string | null,
+    origin: AudioOrigin = "url",
+    quiet = false,
+    expectedResolverRequestId?: number,
+  ) => {
     const cleanUrl = rawUrl.trim();
     if (!cleanUrl) {
       if (!quiet) setMediaError("음원 URL을 입력해 주세요.");
@@ -408,15 +470,33 @@ export function MusicEditor() {
     if (!quiet) setMediaError(null);
 
     try {
-      const response = await fetch(`/api/media/import?url=${encodeURIComponent(cleanUrl)}`);
+      const proxyUrl = remoteAudioProxyUrl(cleanUrl);
+      const response = await fetch(proxyUrl, { method: "HEAD", cache: "no-store" });
       if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error ?? "음원을 가져오지 못했습니다.");
+        const detail = response.headers.get("x-musictube-error");
+        throw new Error(detail || `음원을 확인하지 못했습니다. (HTTP ${response.status})`);
       }
-      const blob = await response.blob();
-      const filename = suggestedFilename?.trim() || filenameFromUrl(cleanUrl);
-      loadAudio(new File([blob], filename, { type: blob.type || "audio/mpeg" }), origin);
+      if (expectedResolverRequestId !== undefined && expectedResolverRequestId !== resolverRequestRef.current) {
+        return false;
+      }
+
+      audioRef.current?.pause();
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+        audioObjectUrlRef.current = null;
+      }
+
+      const filename = suggestedFilename?.trim() || response.headers.get("x-musictube-filename") || filenameFromUrl(cleanUrl);
+      setAudioUrl(proxyUrl);
+      setAudioFile(null);
+      setAudioName(filename);
+      setAudioOrigin(origin === "resolver" ? "resolver" : "url");
       setAudioImportUrl(cleanUrl);
+      setCurrentTime(0);
+      setIsPlaying(false);
+      setMediaError(null);
+      setProjectNotice(null);
+      setRenderError(null);
       return true;
     } catch (error) {
       if (!quiet) setMediaError(error instanceof Error ? error.message : "음원을 가져오지 못했습니다.");
@@ -441,7 +521,7 @@ export function MusicEditor() {
       if (requestId !== resolverRequestRef.current || response.status === 204 || !response.ok) return;
       const payload = (await response.json()) as { url?: string; filename?: string | null };
       if (requestId !== resolverRequestRef.current || !payload.url) return;
-      await importAudioFromUrl(payload.url, payload.filename, "resolver", true);
+      await importAudioFromUrl(payload.url, payload.filename, "resolver", true, requestId);
     } finally {
       if (requestId === resolverRequestRef.current) setIsResolvingAudio(false);
     }
@@ -496,8 +576,8 @@ export function MusicEditor() {
   };
 
   const renderVideo = async () => {
-    if (!audioFile) {
-      setRenderError("먼저 음원을 자동으로 불러오거나 파일로 첨부해 주세요.");
+    if (!hasRenderableAudio) {
+      setRenderError("먼저 음원을 자동으로 연결하거나 파일로 첨부해 주세요.");
       return;
     }
     if (!Number.isFinite(duration) || duration <= 0) {
@@ -511,9 +591,6 @@ export function MusicEditor() {
 
     try {
       const form = new FormData();
-      form.append("audio", audioFile, audioFile.name);
-      if (coverFile) form.append("cover", coverFile, coverFile.name);
-      else if (coverUrl?.startsWith("https://")) form.append("coverUrl", coverUrl);
       form.append("title", title);
       form.append("artist", artist);
       form.append("lyrics", lyricsText);
@@ -523,6 +600,10 @@ export function MusicEditor() {
       form.append("theme", theme);
       form.append("resolution", renderResolution);
       form.append("renderProfile", renderProfile);
+      if (audioFile) form.append("audio", audioFile, audioFile.name);
+      else if (hasRemoteAudio) form.append("audioUrl", audioImportUrl);
+      if (coverFile) form.append("cover", coverFile, coverFile.name);
+      else if (coverUrl?.startsWith("https://")) form.append("coverUrl", coverUrl);
 
       const response = await fetch("/api/render?async=1", { method: "POST", body: form });
       const payload = (await response.json().catch(() => null)) as RenderJob | { error?: string | null } | null;
@@ -532,6 +613,7 @@ export function MusicEditor() {
         throw new Error(message);
       }
       setRenderJob(payload);
+      window.localStorage.setItem(RENDER_JOB_KEY, payload.id);
     } catch (error) {
       setRenderError(error instanceof Error ? error.message : "영상 생성 요청에 실패했습니다.");
     }
@@ -603,9 +685,9 @@ export function MusicEditor() {
             </label>
             <label className="field-label">음원 URL<input value={audioImportUrl} onChange={(event) => setAudioImportUrl(event.target.value)} placeholder="https://.../song.mp3" inputMode="url" /></label>
             <button className="secondary-button full-button" type="button" disabled={isImportingAudio || isRendering} onClick={() => void importAudioFromUrl(audioImportUrl)}>
-              {isImportingAudio ? <LoaderCircle className="spin-icon" size={15} /> : <Link2 size={15} />}{isImportingAudio ? "음원 가져오는 중" : "URL에서 음원 가져오기"}
+              {isImportingAudio ? <LoaderCircle className="spin-icon" size={15} /> : <Link2 size={15} />}{isImportingAudio ? "음원 확인 중" : "URL 음원 연결"}
             </button>
-            <div className="helper-row"><span>HTTPS · 최대 160 MB</span><span>직접 다운로드 가능한 음원</span></div>
+            <div className="helper-row"><span>HTTPS · 최대 160 MB</span><span>원격 음원은 브라우저 메모리에 복사하지 않고 스트리밍</span></div>
             {projectNotice ? <div className="helper-row"><span>{projectNotice}</span></div> : null}
             {mediaError ? <div className="inline-error">{mediaError}</div> : null}
           </section>
@@ -644,7 +726,7 @@ export function MusicEditor() {
             <div className="segmented-control resolution-control">
               {(["1080p", "1440p", "4k"] as RenderResolution[]).map((resolution) => <button key={resolution} type="button" className={renderResolution === resolution ? "active" : ""} disabled={isRendering} onClick={() => setRenderResolution(resolution)}>{resolution === "4k" ? "4K" : resolution}</button>)}
             </div>
-            <button className="render-button" type="button" disabled={isRendering || !audioFile} onClick={() => void renderVideo()}>
+            <button className="render-button" type="button" disabled={isRendering || !hasRenderableAudio} onClick={() => void renderVideo()}>
               {isRendering ? <LoaderCircle className="spin-icon" size={18} /> : <Download size={18} />}
               {isRendering ? `${renderStageLabel(renderJob)} · ${Math.round((renderJob?.progress ?? 0) * 100)}%` : `${renderProfile === "fast" ? "Fast" : "Quality"} · ${renderResolution === "4k" ? "4K" : renderResolution} MP4 생성`}
             </button>
@@ -656,8 +738,8 @@ export function MusicEditor() {
             {isRendering ? <button className="secondary-button full-button" type="button" onClick={() => void cancelRender()}><X size={15} /> 렌더 취소</button> : null}
             {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="secondary-button full-button" type="button" onClick={downloadRender}><Download size={15} /> 완성 영상 다운로드 {formatBytes(renderJob.outputBytes)}</button> : null}
             <div className="helper-row">
-              <span>{isRendering ? `${renderStageLabel(renderJob)} · ${renderElapsed}s 경과${renderEta ? ` · 약 ${renderEta} 남음` : ""}` : renderProfile === "fast" ? "30 FPS · 고속 인코딩" : "60 FPS · 품질 인코딩"}</span>
-              <span>{audioFile ? activeEncoder : "음원 필요"}</span>
+              <span>{isRendering ? `${renderStageLabel(renderJob)} · ${renderElapsedSeconds}s 경과${renderEta ? ` · 약 ${renderEta} 남음` : ""}` : renderProfile === "fast" ? "30 FPS · 고속 인코딩" : "60 FPS · 품질 인코딩"}</span>
+              <span>{hasRenderableAudio ? activeEncoder : "음원 필요"}</span>
             </div>
             {renderJob?.status === "completed" && renderJob.downloadExpiresAt ? <div className="helper-row"><span>완성 파일은 약 6시간 동안 다시 다운로드할 수 있습니다.</span><span>Range/재개 지원</span></div> : null}
             {renderError ? <div className="inline-error">{renderError}</div> : null}
@@ -668,13 +750,13 @@ export function MusicEditor() {
           <div className="preview-toolbar"><div><strong>Preview</strong><span>1920 × 1080 · 16:9</span></div><div className="preview-badges">{genieSongId ? <span>Genie synced</span> : null}{audioOrigin ? <span>{audioOrigin} audio</span> : null}<span>{selectedFps} FPS export</span><span>{renderResolution === "4k" ? "4K export" : `${renderResolution} export`}</span></div></div>
           <VideoPreview title={title} artist={artist} coverUrl={coverUrl} currentTime={currentTime} duration={duration} isPlaying={isPlaying} lyrics={lyrics} motionPreset={motionPreset} motionIntensity={motionIntensity} theme={theme} onTogglePlay={togglePlay} onSeek={seek} />
           <div className={`render-note ${isRendering ? "render-note--active" : ""}`}>
-            <div><strong>{isRendering ? `${renderStageLabel(renderJob)} ${Math.round((renderJob?.progress ?? 0) * 100)}%` : renderJob?.status === "completed" ? "MP4 생성 완료" : "로컬 MP4 생성 준비"}</strong><span>{isRendering ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · ${activeFps} FPS · ${renderJob?.resolvedConcurrency ? `${renderJob.resolvedConcurrency} workers · ` : ""}${activeEncoder} · ${renderElapsed}초 경과${renderEta ? ` · ETA ${renderEta}` : ""}` : `Windows는 NVIDIA NVENC → Intel Quick Sync(QSV) → CPU x264 순서로 감지하고, macOS는 VideoToolbox를 사용합니다.`}</span></div>
-            {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="coming-pill render-quick-button" type="button" onClick={downloadRender}>Download MP4</button> : <button className="coming-pill render-quick-button" type="button" disabled={isRendering || !audioFile} onClick={() => void renderVideo()}>{isRendering ? `${renderStageLabel(renderJob)}…` : "Generate MP4"}</button>}
+            <div><strong>{isRendering ? `${renderStageLabel(renderJob)} ${Math.round((renderJob?.progress ?? 0) * 100)}%` : renderJob?.status === "completed" ? "MP4 생성 완료" : "로컬 MP4 생성 준비"}</strong><span>{isRendering ? `${renderResolution === "4k" ? "3840×2160" : renderResolution === "1440p" ? "2560×1440" : "1920×1080"} · ${activeFps} FPS · ${renderJob?.resolvedConcurrency ? `${renderJob.resolvedConcurrency} workers · ` : ""}${activeEncoder} · ${renderElapsedSeconds}초 경과${renderEta ? ` · ETA ${renderEta}` : ""}` : `Windows는 NVIDIA NVENC → Intel Quick Sync(QSV) → CPU x264 순서로 감지하고, macOS는 VideoToolbox를 사용합니다.`}</span></div>
+            {renderJob?.status === "completed" && renderJob.downloadUrl ? <button className="coming-pill render-quick-button" type="button" onClick={downloadRender}>Download MP4</button> : <button className="coming-pill render-quick-button" type="button" disabled={isRendering || !hasRenderableAudio} onClick={() => void renderVideo()}>{isRendering ? `${renderStageLabel(renderJob)}…` : "Generate MP4"}</button>}
           </div>
         </section>
       </div>
 
-      {audioUrl ? <audio ref={audioRef} src={audioUrl} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) setDuration(nextDuration); }} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onEnded={() => setIsPlaying(false)} /> : null}
+      {audioUrl ? <audio ref={audioRef} src={audioUrl} preload="metadata" onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) setDuration(nextDuration); }} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onEnded={() => setIsPlaying(false)} onError={() => setMediaError("음원을 재생하지 못했습니다. 원격 URL이 만료되었거나 접근할 수 없는지 확인해 주세요.")} /> : null}
     </main>
   );
 }
