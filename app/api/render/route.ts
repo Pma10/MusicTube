@@ -168,17 +168,17 @@ export async function POST(request: Request) {
 
     const durationSeconds = Number(text(fields, "duration", "0"));
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_DURATION_SECONDS) {
-      return NextResponse.json({ error: "음원 길이 정보가 올바르지 않습니다." }, { status: 400 });
+      throw new RenderMultipartError("음원 길이 정보가 올바르지 않습니다.", 400);
     }
 
     const resolution = text(fields, "resolution", "1080p") as RenderResolution;
     if (!RESOLUTIONS.has(resolution)) {
-      return NextResponse.json({ error: "지원하지 않는 출력 해상도입니다." }, { status: 400 });
+      throw new RenderMultipartError("지원하지 않는 출력 해상도입니다.", 400);
     }
 
     const profile = text(fields, "renderProfile", "fast") as RenderProfile;
     if (!RENDER_PROFILES.has(profile)) {
-      return NextResponse.json({ error: "지원하지 않는 렌더 프로필입니다." }, { status: 400 });
+      throw new RenderMultipartError("지원하지 않는 렌더 프로필입니다.", 400);
     }
 
     await checkRenderStorage({
