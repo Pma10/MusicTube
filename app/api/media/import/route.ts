@@ -107,6 +107,37 @@ function filenameFromUrl(url: URL) {
   return safe || "remote-audio";
 }
 
+function limitStream(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  let total = 0;
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+
+        total += value.byteLength;
+        if (total > MAX_BYTES) {
+          await reader.cancel("Audio file exceeded MusicTube import limit");
+          controller.error(new Error("Audio file is larger than 160 MB"));
+          return;
+        }
+
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
 export async function GET(request: NextRequest) {
   const rawUrl = request.nextUrl.searchParams.get("url")?.trim();
   if (!rawUrl) return NextResponse.json({ error: "url is required" }, { status: 400 });
@@ -131,42 +162,21 @@ export async function GET(request: NextRequest) {
 
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (contentLength > MAX_BYTES) {
+      await response.body?.cancel().catch(() => undefined);
       return NextResponse.json({ error: "Audio file is larger than 160 MB" }, { status: 413 });
     }
 
     if (!response.body) return NextResponse.json({ error: "Audio source returned an empty body" }, { status: 502 });
 
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_BYTES) {
-        await reader.cancel();
-        return NextResponse.json({ error: "Audio file is larger than 160 MB" }, { status: 413 });
-      }
-      chunks.push(value);
-    }
-
-    const body = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      body.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-
-    return new NextResponse(body, {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Length": String(total),
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filenameFromUrl(finalUrl))}`,
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-      },
+    const headers = new Headers({
+      "Content-Type": contentType,
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filenameFromUrl(finalUrl))}`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
     });
+    if (contentLength > 0) headers.set("Content-Length", String(contentLength));
+
+    return new NextResponse(limitStream(response.body), { headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to import audio";
     return NextResponse.json({ error: message }, { status: 400 });
