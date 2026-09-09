@@ -30,7 +30,7 @@ type UploadFileInfo = {
 };
 
 type UploadFileStream = Readable & {
-  truncated: boolean;
+  truncated?: boolean;
 };
 
 export class RenderMultipartError extends Error {
@@ -107,7 +107,7 @@ async function storeFilePart(
     await handle.close();
   }
 
-  if (stream.truncated || exceeded) {
+  if (stream.truncated === true || exceeded) {
     await rm(path, { force: true }).catch(() => undefined);
     throw new RenderMultipartError(tooLargeMessage, 413);
   }
