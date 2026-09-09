@@ -1,6 +1,7 @@
 import { open, rm } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import Busboy from "busboy";
 
@@ -22,6 +23,7 @@ const ACCEPTED_FIELDS = new Set([
   "resolution",
   "renderProfile",
   "coverUrl",
+  "audioUrl",
 ]);
 
 type UploadFileInfo = {
@@ -50,7 +52,7 @@ type StoredPart = {
 
 export type ParsedRenderMultipart = {
   fields: Record<string, string>;
-  audio: StoredPart;
+  audio: StoredPart | null;
   cover: StoredPart | null;
 };
 
@@ -243,20 +245,37 @@ export async function parseRenderMultipart(request: Request, publicDir: string):
   parser.on("fieldsLimit", () => setFatal(new RenderMultipartError("렌더 설정 필드 수가 너무 많습니다.", 413)));
   parser.on("partsLimit", () => setFatal(new RenderMultipartError("multipart 항목 수가 너무 많습니다.", 413)));
 
-  const parsing = new Promise<void>((resolve, reject) => {
-    parser.once("close", resolve);
-    parser.once("error", reject);
+  let receivedBytes = 0;
+  const totalLimiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      const data = asBuffer(chunk);
+      receivedBytes += data.byteLength;
+      if (receivedBytes > MAX_REQUEST_BYTES) {
+        callback(new RenderMultipartError("렌더 요청이 허용된 최대 크기를 초과했습니다.", 413));
+        return;
+      }
+      callback(null, data);
+    },
   });
 
   const source = Readable.fromWeb(request.body as NodeReadableStream<Uint8Array>);
-  source.once("error", (error) => parser.destroy(error));
-  source.pipe(parser);
+  try {
+    await pipeline(source, totalLimiter, parser);
+  } catch (error) {
+    await Promise.allSettled(writes);
+    if (error instanceof RenderMultipartError) throw error;
+    if (fatalError) throw fatalError;
+    throw new RenderMultipartError("multipart/form-data 요청을 끝까지 읽지 못했습니다.", 400);
+  }
 
-  await parsing;
   await Promise.all(writes);
 
   if (fatalError) throw fatalError;
-  if (!audio) throw new RenderMultipartError("영상 생성에는 음원 파일이 필요합니다.", 400);
+  if (audio && audio.bytes <= 0) throw new RenderMultipartError("음원 파일이 비어 있습니다.", 400);
+  if (cover && cover.bytes <= 0) throw new RenderMultipartError("앨범아트 파일이 비어 있습니다.", 400);
+  if (!audio && !fields.audioUrl?.trim()) {
+    throw new RenderMultipartError("영상 생성에는 음원 파일 또는 음원 URL이 필요합니다.", 400);
+  }
 
   return { fields, audio, cover };
 }
