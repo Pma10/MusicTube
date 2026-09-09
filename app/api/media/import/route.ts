@@ -64,7 +64,10 @@ function sizeHeaders(response: Response) {
 function errorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unable to import audio";
   const status = error instanceof RemoteMediaError ? error.status : 502;
-  return NextResponse.json({ error: message }, { status });
+  const response = NextResponse.json({ error: message }, { status });
+  response.headers.set("X-MusicTube-Error", message.slice(0, 500));
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
 }
 
 export async function HEAD(request: NextRequest) {
