@@ -78,6 +78,16 @@ export async function checkRenderStorage(input: {
   }
 }
 
+async function latestRenderActivityMs(path: string, fallback: number) {
+  let latest = fallback;
+  const candidates = [join(path, "video.mp4"), join(path, "public")];
+  for (const candidate of candidates) {
+    const info = await stat(candidate).catch(() => null);
+    if (info) latest = Math.max(latest, info.mtimeMs);
+  }
+  return latest;
+}
+
 async function cleanupStaleRenderDirectoriesNow() {
   const root = tmpdir();
   const now = Date.now();
@@ -89,7 +99,13 @@ async function cleanupStaleRenderDirectoriesNow() {
       .map(async (entry) => {
         const path = join(root, entry.name);
         const info = await stat(path).catch(() => null);
-        if (!info || now - info.mtimeMs <= ORPHAN_MAX_AGE_MS) return;
+        if (!info) return;
+
+        // A long render may keep the root directory entry itself unchanged while FFmpeg
+        // continues writing video.mp4. Use the newest known activity instead of root mtime
+        // alone so a separate render request cannot prune a still-active long job.
+        const latestActivity = await latestRenderActivityMs(path, info.mtimeMs);
+        if (now - latestActivity <= ORPHAN_MAX_AGE_MS) return;
         await rm(path, { recursive: true, force: true }).catch(() => undefined);
       }),
   );
