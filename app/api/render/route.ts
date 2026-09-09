@@ -2,9 +2,14 @@ import { lookup } from "node:dns/promises";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { getRenderJob, queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
+import {
+  MAX_RENDER_COVER_BYTES,
+  parseRenderMultipart,
+  RenderMultipartError,
+} from "@/lib/render-multipart";
 import type {
   MusicTubeRenderProps,
   RenderMotionPreset,
@@ -15,34 +20,18 @@ import type {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_AUDIO_BYTES = 160 * 1024 * 1024;
-const MAX_COVER_BYTES = 20 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 6 * 60 * 60;
 const MAX_REDIRECTS = 4;
 
-const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"]);
 const RESOLUTIONS = new Set<RenderResolution>(["1080p", "1440p", "4k"]);
 const RENDER_PROFILES = new Set<RenderProfile>(["fast", "quality"]);
 
-function text(form: FormData, key: string, fallback = "") {
-  const value = form.get(key);
-  return typeof value === "string" ? value.trim() : fallback;
+function text(fields: Record<string, string>, key: string, fallback = "") {
+  return (fields[key] ?? fallback).trim();
 }
 
 function bounded(value: string, maxLength: number, fallback: string) {
   return (value || fallback).slice(0, maxLength);
-}
-
-function safeAudioExtension(file: File) {
-  const extension = extname(file.name).toLowerCase();
-  if (AUDIO_EXTENSIONS.has(extension)) return extension;
-  if (file.type.includes("wav")) return ".wav";
-  if (file.type.includes("flac")) return ".flac";
-  if (file.type.includes("ogg")) return ".ogg";
-  if (file.type.includes("opus")) return ".opus";
-  if (file.type.includes("aac")) return ".aac";
-  if (file.type.includes("mp4")) return ".m4a";
-  return ".mp3";
 }
 
 function coverExtension(contentType: string) {
@@ -131,10 +120,10 @@ async function downloadCover(rawUrl: string) {
     if (!contentType.toLowerCase().startsWith("image/")) throw new Error("Cover URL did not return an image");
 
     const announcedSize = Number(response.headers.get("content-length") || 0);
-    if (announcedSize > MAX_COVER_BYTES) throw new Error("Cover image is larger than 20 MB");
+    if (announcedSize > MAX_RENDER_COVER_BYTES) throw new Error("Cover image is larger than 20 MB");
 
     const data = new Uint8Array(await response.arrayBuffer());
-    if (data.byteLength > MAX_COVER_BYTES) throw new Error("Cover image is larger than 20 MB");
+    if (data.byteLength > MAX_RENDER_COVER_BYTES) throw new Error("Cover image is larger than 20 MB");
     return { data, extension: coverExtension(contentType) };
   }
 
@@ -168,65 +157,40 @@ export async function POST(request: Request) {
   const outputPath = join(jobRoot, "video.mp4");
 
   try {
-    const form = await request.formData();
-    const audio = form.get("audio");
-    if (!(audio instanceof File) || audio.size === 0) {
-      return NextResponse.json({ error: "영상 생성에는 음원 파일이 필요합니다." }, { status: 400 });
-    }
-    if (audio.size > MAX_AUDIO_BYTES) {
-      return NextResponse.json({ error: "음원 파일은 최대 160 MB까지 지원합니다." }, { status: 413 });
-    }
+    await mkdir(publicDir, { recursive: true });
+    const { fields, audio, cover } = await parseRenderMultipart(request, publicDir);
 
-    const cover = form.get("cover");
-    if (cover instanceof File && cover.size > 0) {
-      if (cover.size > MAX_COVER_BYTES) {
-        return NextResponse.json({ error: "앨범아트는 최대 20 MB까지 지원합니다." }, { status: 413 });
-      }
-      if (!cover.type.startsWith("image/")) {
-        return NextResponse.json({ error: "앨범아트 파일 형식이 올바르지 않습니다." }, { status: 415 });
-      }
-    }
-
-    const durationSeconds = Number(text(form, "duration", "0"));
+    const durationSeconds = Number(text(fields, "duration", "0"));
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_DURATION_SECONDS) {
       return NextResponse.json({ error: "음원 길이 정보가 올바르지 않습니다." }, { status: 400 });
     }
 
-    const resolution = text(form, "resolution", "1080p") as RenderResolution;
+    const resolution = text(fields, "resolution", "1080p") as RenderResolution;
     if (!RESOLUTIONS.has(resolution)) {
       return NextResponse.json({ error: "지원하지 않는 출력 해상도입니다." }, { status: 400 });
     }
 
-    const profile = text(form, "renderProfile", "fast") as RenderProfile;
+    const profile = text(fields, "renderProfile", "fast") as RenderProfile;
     if (!RENDER_PROFILES.has(profile)) {
       return NextResponse.json({ error: "지원하지 않는 렌더 프로필입니다." }, { status: 400 });
     }
 
-    const motionPresetRaw = text(form, "motionPreset", "soft");
+    const motionPresetRaw = text(fields, "motionPreset", "soft");
     const motionPreset: RenderMotionPreset = ["soft", "cinematic", "minimal"].includes(motionPresetRaw)
       ? (motionPresetRaw as RenderMotionPreset)
       : "soft";
-    const themeRaw = text(form, "theme", "warm");
+    const themeRaw = text(fields, "theme", "warm");
     const theme: RenderThemePreset = ["warm", "cool", "mono"].includes(themeRaw)
       ? (themeRaw as RenderThemePreset)
       : "warm";
-    const motionIntensityRaw = Number(text(form, "motionIntensity", "1"));
+    const motionIntensityRaw = Number(text(fields, "motionIntensity", "1"));
     const motionIntensity = Number.isFinite(motionIntensityRaw)
       ? Math.max(0.6, Math.min(1.4, motionIntensityRaw))
       : 1;
 
-    await mkdir(publicDir, { recursive: true });
-
-    const audioFilename = `audio${safeAudioExtension(audio)}`;
-    await writeFile(join(publicDir, audioFilename), new Uint8Array(await audio.arrayBuffer()));
-
-    let coverPath: string | null = null;
-    if (cover instanceof File && cover.size > 0) {
-      const filename = `cover${coverExtension(cover.type)}`;
-      await writeFile(join(publicDir, filename), new Uint8Array(await cover.arrayBuffer()));
-      coverPath = filename;
-    } else {
-      const coverUrl = text(form, "coverUrl");
+    let coverPath: string | null = cover?.filename ?? null;
+    if (!coverPath) {
+      const coverUrl = text(fields, "coverUrl");
       if (coverUrl) {
         const downloaded = await downloadCover(coverUrl);
         const filename = `cover${downloaded.extension}`;
@@ -235,13 +199,13 @@ export async function POST(request: Request) {
       }
     }
 
-    const title = bounded(text(form, "title"), 160, "Untitled");
-    const artist = bounded(text(form, "artist"), 160, "Unknown Artist");
+    const title = bounded(text(fields, "title"), 160, "Untitled");
+    const artist = bounded(text(fields, "artist"), 160, "Unknown Artist");
     const props: MusicTubeRenderProps = {
       title,
       artist,
-      lyrics: text(form, "lyrics").slice(0, 250_000),
-      audioPath: audioFilename,
+      lyrics: text(fields, "lyrics").slice(0, 250_000),
+      audioPath: audio.filename,
       coverPath,
       durationSeconds,
       motionPreset,
@@ -269,6 +233,7 @@ export async function POST(request: Request) {
   } catch (error) {
     await cleanup(jobRoot);
     const message = error instanceof Error ? error.message : "영상 생성 요청에 실패했습니다.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = error instanceof RenderMultipartError ? error.status : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
