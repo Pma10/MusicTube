@@ -7,8 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ id: string }> };
-
 type ByteRange = { start: number; end: number };
+type RenderFile = { filename: string; size: number; path: string };
 
 function parseRange(value: string | null, size: number): ByteRange | null | "invalid" {
   if (!value) return null;
@@ -36,23 +36,29 @@ function parseRange(value: string | null, size: number): ByteRange | null | "inv
   return { start, end };
 }
 
-function commonHeaders(file: { filename: string; size: number }) {
+function fileEtag(id: string, file: RenderFile) {
+  return `"musictube-${id}-${file.size}"`;
+}
+
+function commonHeaders(id: string, file: RenderFile) {
   return {
     "Content-Type": "video/mp4",
     "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
     "Accept-Ranges": "bytes",
+    ETag: fileEtag(id, file),
   };
 }
 
 async function resolveFile(context: Context) {
   const { id } = await context.params;
-  return getRenderJobFile(id);
+  const file = await getRenderJobFile(id);
+  return { id, file };
 }
 
 export async function HEAD(_request: Request, context: Context) {
-  const file = await resolveFile(context);
+  const { id, file } = await resolveFile(context);
   if (!file) {
     return NextResponse.json({ error: "완료된 렌더 결과를 찾을 수 없습니다." }, { status: 404 });
   }
@@ -60,24 +66,28 @@ export async function HEAD(_request: Request, context: Context) {
   return new NextResponse(null, {
     status: 200,
     headers: {
-      ...commonHeaders(file),
+      ...commonHeaders(id, file),
       "Content-Length": String(file.size),
     },
   });
 }
 
 export async function GET(request: Request, context: Context) {
-  const file = await resolveFile(context);
+  const { id, file } = await resolveFile(context);
   if (!file) {
     return NextResponse.json({ error: "완료된 렌더 결과를 찾을 수 없습니다." }, { status: 404 });
   }
 
-  const range = parseRange(request.headers.get("range"), file.size);
+  const etag = fileEtag(id, file);
+  const requestedRange = request.headers.get("range");
+  const ifRange = request.headers.get("if-range");
+  const rangeHeader = requestedRange && (!ifRange || ifRange === etag) ? requestedRange : null;
+  const range = parseRange(rangeHeader, file.size);
   if (range === "invalid") {
     return new NextResponse(null, {
       status: 416,
       headers: {
-        ...commonHeaders(file),
+        ...commonHeaders(id, file),
         "Content-Range": `bytes */${file.size}`,
       },
     });
@@ -92,7 +102,7 @@ export async function GET(request: Request, context: Context) {
   return new NextResponse(webStream, {
     status: range ? 206 : 200,
     headers: {
-      ...commonHeaders(file),
+      ...commonHeaders(id, file),
       "Content-Length": String(length),
       ...(range ? { "Content-Range": `bytes ${start}-${end}/${file.size}` } : {}),
     },
