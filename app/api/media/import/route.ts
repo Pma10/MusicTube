@@ -65,7 +65,6 @@ function errorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unable to import audio";
   const status = error instanceof RemoteMediaError ? error.status : 502;
   const response = NextResponse.json({ error: message }, { status });
-  response.headers.set("X-MusicTube-Error", message.slice(0, 500));
   response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
@@ -84,7 +83,6 @@ export async function HEAD(request: NextRequest) {
       "Content-Type": remote.mimeType,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
-      "X-MusicTube-Filename": remoteFilename(remote.finalUrl, `remote-audio${remote.extension}`),
       "Accept-Ranges": "bytes",
     });
     if (total !== null) headers.set("X-MusicTube-Bytes", String(total));
@@ -124,7 +122,6 @@ export async function GET(request: NextRequest) {
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
       "Accept-Ranges": "bytes",
-      "X-MusicTube-Filename": remoteFilename(remote.finalUrl, `remote-audio${remote.extension}`),
     });
     if (chunkLength !== null) headers.set("Content-Length", String(chunkLength));
     const contentRange = remote.response.headers.get("content-range");
