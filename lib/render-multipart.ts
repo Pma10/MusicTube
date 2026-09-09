@@ -2,7 +2,7 @@ import { open, rm } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
-import Busboy, { type FileInfo, type FileStream } from "busboy";
+import Busboy from "busboy";
 
 export const MAX_RENDER_AUDIO_BYTES = 160 * 1024 * 1024;
 export const MAX_RENDER_COVER_BYTES = 20 * 1024 * 1024;
@@ -23,6 +23,15 @@ const ACCEPTED_FIELDS = new Set([
   "renderProfile",
   "coverUrl",
 ]);
+
+type UploadFileInfo = {
+  filename: string;
+  mimeType: string;
+};
+
+type UploadFileStream = Readable & {
+  truncated: boolean;
+};
 
 export class RenderMultipartError extends Error {
   constructor(
@@ -75,7 +84,7 @@ function asBuffer(chunk: unknown) {
 }
 
 async function storeFilePart(
-  stream: FileStream,
+  stream: UploadFileStream,
   path: string,
   maxBytes: number,
   tooLargeMessage: string,
@@ -106,7 +115,7 @@ async function storeFilePart(
   return bytes;
 }
 
-function validateAudio(info: FileInfo) {
+function validateAudio(info: UploadFileInfo) {
   const extension = audioExtension(info.filename, info.mimeType);
   const looksLikeAudio = info.mimeType.toLowerCase().startsWith("audio/") || extension !== null;
   if (!looksLikeAudio || !extension) {
@@ -118,7 +127,7 @@ function validateAudio(info: FileInfo) {
   return extension;
 }
 
-function validateCover(info: FileInfo) {
+function validateCover(info: UploadFileInfo) {
   const extension = coverExtension(info.filename, info.mimeType);
   if (!info.mimeType.toLowerCase().startsWith("image/") || !extension) {
     throw new RenderMultipartError("앨범아트는 JPG, PNG, WEBP만 지원합니다.", 415);
@@ -148,17 +157,22 @@ export async function parseRenderMultipart(request: Request, publicDir: string):
   let fatalError: Error | null = null;
   const writes: Promise<void>[] = [];
 
-  const parser = Busboy({
-    headers: { "content-type": contentType },
-    limits: {
-      files: 2,
-      fields: 20,
-      parts: 24,
-      fieldNameSize: 80,
-      fieldSize: MAX_FIELD_BYTES,
-      fileSize: MAX_RENDER_AUDIO_BYTES + 1,
-    },
-  });
+  let parser: ReturnType<typeof Busboy>;
+  try {
+    parser = Busboy({
+      headers: { "content-type": contentType },
+      limits: {
+        files: 2,
+        fields: 20,
+        parts: 24,
+        fieldNameSize: 80,
+        fieldSize: MAX_FIELD_BYTES,
+        fileSize: MAX_RENDER_AUDIO_BYTES + 1,
+      },
+    });
+  } catch {
+    throw new RenderMultipartError("multipart/form-data 형식이 올바르지 않습니다.", 400);
+  }
 
   const setFatal = (error: Error) => {
     fatalError ??= error;
