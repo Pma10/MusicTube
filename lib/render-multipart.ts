@@ -50,6 +50,11 @@ type StoredPart = {
   bytes: number;
 };
 
+type StoredParts = {
+  audio: StoredPart | null;
+  cover: StoredPart | null;
+};
+
 export type ParsedRenderMultipart = {
   fields: Record<string, string>;
   audio: StoredPart | null;
@@ -85,6 +90,15 @@ function asBuffer(chunk: unknown) {
   return Buffer.from(String(chunk));
 }
 
+async function writeAll(handle: Awaited<ReturnType<typeof open>>, data: Buffer) {
+  let offset = 0;
+  while (offset < data.byteLength) {
+    const { bytesWritten } = await handle.write(data, offset, data.byteLength - offset);
+    if (bytesWritten <= 0) throw new Error("첨부 파일 쓰기가 중단되었습니다.");
+    offset += bytesWritten;
+  }
+}
+
 async function storeFilePart(
   stream: UploadFileStream,
   path: string,
@@ -103,8 +117,11 @@ async function storeFilePart(
         exceeded = true;
         continue;
       }
-      await handle.write(data);
+      await writeAll(handle, data);
     }
+  } catch (error) {
+    await rm(path, { force: true }).catch(() => undefined);
+    throw error;
   } finally {
     await handle.close();
   }
@@ -152,8 +169,7 @@ export async function parseRenderMultipart(request: Request, publicDir: string):
   }
 
   const fields: Record<string, string> = {};
-  let audio: StoredPart | null = null;
-  let cover: StoredPart | null = null;
+  const stored: StoredParts = { audio: null, cover: null };
   let sawAudio = false;
   let sawCover = false;
   let fatalError: Error | null = null;
@@ -208,7 +224,7 @@ export async function parseRenderMultipart(request: Request, publicDir: string):
         writes.push(
           storeFilePart(stream, path, MAX_RENDER_AUDIO_BYTES, "음원 파일은 최대 160 MB까지 지원합니다.")
             .then((bytes) => {
-              audio = { filename, bytes };
+              stored.audio = { filename, bytes };
             })
             .catch((error: unknown) => {
               setFatal(error instanceof Error ? error : new Error("음원을 저장하지 못했습니다."));
@@ -229,7 +245,7 @@ export async function parseRenderMultipart(request: Request, publicDir: string):
       writes.push(
         storeFilePart(stream, path, MAX_RENDER_COVER_BYTES, "앨범아트는 최대 20 MB까지 지원합니다.")
           .then((bytes) => {
-            cover = { filename, bytes };
+            stored.cover = { filename, bytes };
           })
           .catch((error: unknown) => {
             setFatal(error instanceof Error ? error : new Error("앨범아트를 저장하지 못했습니다."));
@@ -271,8 +287,10 @@ export async function parseRenderMultipart(request: Request, publicDir: string):
   await Promise.all(writes);
 
   if (fatalError) throw fatalError;
-  if (audio && audio.bytes <= 0) throw new RenderMultipartError("음원 파일이 비어 있습니다.", 400);
-  if (cover && cover.bytes <= 0) throw new RenderMultipartError("앨범아트 파일이 비어 있습니다.", 400);
+  const audio = stored.audio;
+  const cover = stored.cover;
+  if (audio?.bytes === 0) throw new RenderMultipartError("음원 파일이 비어 있습니다.", 400);
+  if (cover?.bytes === 0) throw new RenderMultipartError("앨범아트 파일이 비어 있습니다.", 400);
   if (!audio && !fields.audioUrl?.trim()) {
     throw new RenderMultipartError("영상 생성에는 음원 파일 또는 음원 URL이 필요합니다.", 400);
   }
