@@ -1,15 +1,18 @@
-import { lookup } from "node:dns/promises";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { isIP } from "node:net";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { getRenderJob, queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
 import {
-  MAX_RENDER_COVER_BYTES,
   parseRenderMultipart,
   RenderMultipartError,
 } from "@/lib/render-multipart";
+import {
+  downloadRemoteAudio,
+  downloadRemoteImage,
+  MAX_REMOTE_AUDIO_BYTES,
+  RemoteMediaError,
+} from "@/lib/remote-media";
 import {
   checkRenderStorage,
   cleanupStaleRenderDirectories,
@@ -26,8 +29,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_DURATION_SECONDS = 6 * 60 * 60;
-const MAX_REDIRECTS = 4;
-
 const RESOLUTIONS = new Set<RenderResolution>(["1080p", "1440p", "4k"]);
 const RENDER_PROFILES = new Set<RenderProfile>(["fast", "quality"]);
 
@@ -37,102 +38,6 @@ function text(fields: Record<string, string>, key: string, fallback = "") {
 
 function bounded(value: string, maxLength: number, fallback: string) {
   return (value || fallback).slice(0, maxLength);
-}
-
-function coverExtension(contentType: string) {
-  const type = contentType.toLowerCase();
-  if (type.includes("png")) return ".png";
-  if (type.includes("webp")) return ".webp";
-  return ".jpg";
-}
-
-function isPrivateIpv4(value: string) {
-  const parts = value.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    a >= 224
-  );
-}
-
-function isPrivateIpv6(value: string) {
-  const ip = value.toLowerCase().split("%")[0];
-  return (
-    ip === "::" ||
-    ip === "::1" ||
-    ip.startsWith("fc") ||
-    ip.startsWith("fd") ||
-    ip.startsWith("fe8") ||
-    ip.startsWith("fe9") ||
-    ip.startsWith("fea") ||
-    ip.startsWith("feb") ||
-    ip.startsWith("::ffff:127.") ||
-    ip.startsWith("::ffff:10.") ||
-    ip.startsWith("::ffff:192.168.")
-  );
-}
-
-function isPrivateAddress(value: string) {
-  const family = isIP(value);
-  if (family === 4) return isPrivateIpv4(value);
-  if (family === 6) return isPrivateIpv6(value);
-  return true;
-}
-
-async function assertPublicHttps(url: URL) {
-  if (url.protocol !== "https:") throw new Error("HTTPS cover URLs only");
-  if (url.username || url.password) throw new Error("Credentials in cover URLs are not allowed");
-  if (url.hostname === "localhost" || url.hostname.endsWith(".localhost")) throw new Error("Local cover URLs are not allowed");
-
-  if (isIP(url.hostname)) {
-    if (isPrivateAddress(url.hostname)) throw new Error("Private network cover URLs are not allowed");
-    return;
-  }
-
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some((entry) => isPrivateAddress(entry.address))) {
-    throw new Error("Cover host resolves to a private network address");
-  }
-}
-
-async function downloadCover(rawUrl: string) {
-  let current = new URL(rawUrl);
-
-  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    await assertPublicHttps(current);
-    const response = await fetch(current, {
-      redirect: "manual",
-      cache: "no-store",
-      headers: { Accept: "image/*", "User-Agent": "MusicTube/0.1 renderer" },
-    });
-
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get("location");
-      if (!location) throw new Error("Cover source returned an invalid redirect");
-      current = new URL(location, current);
-      continue;
-    }
-
-    if (!response.ok) throw new Error(`Cover source returned HTTP ${response.status}`);
-    const contentType = response.headers.get("content-type")?.split(";")[0] ?? "";
-    if (!contentType.toLowerCase().startsWith("image/")) throw new Error("Cover URL did not return an image");
-
-    const announcedSize = Number(response.headers.get("content-length") || 0);
-    if (announcedSize > MAX_RENDER_COVER_BYTES) throw new Error("Cover image is larger than 20 MB");
-
-    const data = new Uint8Array(await response.arrayBuffer());
-    if (data.byteLength > MAX_RENDER_COVER_BYTES) throw new Error("Cover image is larger than 20 MB");
-    return { data, extension: coverExtension(contentType) };
-  }
-
-  throw new Error("Too many cover redirects");
 }
 
 function outputFilename(title: string, artist: string, resolution: RenderResolution) {
@@ -164,7 +69,7 @@ export async function POST(request: Request) {
   try {
     await cleanupStaleRenderDirectories();
     await mkdir(publicDir, { recursive: true });
-    const { fields, audio, cover } = await parseRenderMultipart(request, publicDir);
+    const { fields, audio: uploadedAudio, cover } = await parseRenderMultipart(request, publicDir);
 
     const durationSeconds = Number(text(fields, "duration", "0"));
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_DURATION_SECONDS) {
@@ -181,12 +86,29 @@ export async function POST(request: Request) {
       throw new RenderMultipartError("지원하지 않는 렌더 프로필입니다.", 400);
     }
 
-    await checkRenderStorage({
-      durationSeconds,
-      resolution,
-      profile,
-      audioBytes: audio.bytes,
-    });
+    let audio = uploadedAudio;
+    if (audio) {
+      await checkRenderStorage({
+        durationSeconds,
+        resolution,
+        profile,
+        audioBytes: audio.bytes,
+      });
+    } else {
+      const audioUrl = text(fields, "audioUrl");
+      if (!audioUrl) {
+        throw new RenderMultipartError("영상 생성에는 음원 파일 또는 음원 URL이 필요합니다.", 400);
+      }
+
+      // Fail before a potentially long remote download if the final render clearly cannot fit.
+      await checkRenderStorage({
+        durationSeconds,
+        resolution,
+        profile,
+        audioBytes: MAX_REMOTE_AUDIO_BYTES,
+      });
+      audio = await downloadRemoteAudio(audioUrl, publicDir);
+    }
 
     const motionPresetRaw = text(fields, "motionPreset", "soft");
     const motionPreset: RenderMotionPreset = ["soft", "cinematic", "minimal"].includes(motionPresetRaw)
@@ -205,10 +127,7 @@ export async function POST(request: Request) {
     if (!coverPath) {
       const coverUrl = text(fields, "coverUrl");
       if (coverUrl) {
-        const downloaded = await downloadCover(coverUrl);
-        const filename = `cover${downloaded.extension}`;
-        await writeFile(join(publicDir, filename), downloaded.data);
-        coverPath = filename;
+        coverPath = (await downloadRemoteImage(coverUrl, publicDir)).filename;
       }
     }
 
@@ -247,7 +166,9 @@ export async function POST(request: Request) {
     await cleanup(jobRoot);
     const message = error instanceof Error ? error.message : "영상 생성 요청에 실패했습니다.";
     const status =
-      error instanceof RenderMultipartError || error instanceof RenderStorageError ? error.status : 500;
+      error instanceof RenderMultipartError || error instanceof RenderStorageError || error instanceof RemoteMediaError
+        ? error.status
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
