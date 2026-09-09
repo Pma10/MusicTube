@@ -127,7 +127,13 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
               disabled={applyingId !== null}
             >
               <span className={styles.cover}>
-                {song.thumbnail_url ? <img src={song.thumbnail_url} alt="" /> : <span>♪</span>}
+                {song.thumbnail_url ? (
+                  // Genie artwork hosts are dynamic, so a native image avoids hard-coding Next remote host rules.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={song.thumbnail_url} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+                ) : (
+                  <span>♪</span>
+                )}
               </span>
               <span className={styles.meta}>
                 <strong>{song.title}</strong>
