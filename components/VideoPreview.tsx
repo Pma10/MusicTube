@@ -231,15 +231,17 @@ export function VideoPreview({
                         transition={lyricTransition}
                         aria-hidden={distance >= 2}
                       >
-                        <motion.div
-                          className="lyric-row-inner"
-                          animate={{ scale: targetScale }}
-                          transition={lyricTransition}
-                        >
-                          <div className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}>
-                            {line.text || " "}
-                          </div>
-                        </motion.div>
+                        <div className="lyric-row-inner">
+                          <motion.div
+                            className="lyric-row-scale"
+                            animate={{ scale: targetScale }}
+                            transition={lyricTransition}
+                          >
+                            <div className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}>
+                              {line.text || " "}
+                            </div>
+                          </motion.div>
+                        </div>
                       </motion.div>
                     );
                   })
