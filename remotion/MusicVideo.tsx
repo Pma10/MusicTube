@@ -14,7 +14,7 @@ import type { MusicTubeRenderProps, RenderThemePreset } from "./types";
 
 type LyricLine = { time: number; text: string };
 
-const LYRIC_PAGE_SIZE = 4;
+const LYRIC_PAGE_SIZE = 3;
 
 const themeFallback: Record<RenderThemePreset, string> = {
   warm: "linear-gradient(130deg, #918b72 0%, #6f6e5f 38%, #575d5d 68%, #343630 100%)",
