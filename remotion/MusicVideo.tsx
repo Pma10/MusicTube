@@ -66,8 +66,9 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-function easeOutQuint(value: number) {
-  return 1 - Math.pow(1 - clamp01(value), 5);
+function easeInOutCubic(value: number) {
+  const t = clamp01(value);
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 function formatTime(value: number) {
@@ -100,10 +101,10 @@ function lyricFontSize(value: string) {
 
 function lyricLineHeight(value: string) {
   const length = [...value].length;
-  if (length >= 90) return 1.16;
-  if (length >= 54) return 1.18;
-  if (length >= 34) return 1.2;
-  return 1.24;
+  if (length >= 90) return 1.2;
+  if (length >= 54) return 1.22;
+  if (length >= 34) return 1.25;
+  return 1.3;
 }
 
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
@@ -128,16 +129,8 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
   return <div style={style}>{children}</div>;
 }
 
-function LyricCarousel({
-  lyrics,
-  focusIndex,
-  transitionProgress,
-}: {
-  lyrics: LyricLine[];
-  focusIndex: number;
-  transitionProgress: number;
-}) {
-  if (!lyrics.length || focusIndex < 0) {
+function LyricRail({ lyrics, railIndex }: { lyrics: LyricLine[]; railIndex: number }) {
+  if (!lyrics.length || railIndex < 0) {
     return (
       <div
         style={{
@@ -154,32 +147,25 @@ function LyricCarousel({
     );
   }
 
+  const centerIndex = Math.max(0, Math.min(lyrics.length - 1, Math.round(railIndex)));
+  const rowStep = 89;
   const indexes: number[] = [];
-  for (let index = Math.max(0, focusIndex - 2); index <= Math.min(lyrics.length - 1, focusIndex + 2); index += 1) {
+  for (let index = Math.max(0, centerIndex - 3); index <= Math.min(lyrics.length - 1, centerIndex + 3); index += 1) {
     indexes.push(index);
   }
-
-  const progress = focusIndex > 0 ? transitionProgress : 1;
-  const rowGap = 66;
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "visible" }}>
       {indexes.map((lineIndex) => {
         const line = lyrics[lineIndex];
-        const endRelative = lineIndex - focusIndex;
-        const startRelative = focusIndex > 0 ? endRelative + 1 : endRelative;
-        const relative = startRelative + (endRelative - startRelative) * progress;
-        const visibility = clamp01(2 - Math.abs(relative));
-        const activeStrength =
-          lineIndex === focusIndex
-            ? progress
-            : lineIndex === focusIndex - 1 && focusIndex > 0
-              ? 1 - progress
-              : 0;
-        const opacity = visibility * (0.45 + activeStrength * 0.55);
-        const scale = 0.985 + activeStrength * 0.07;
+        const relative = lineIndex - railIndex;
+        const distance = Math.abs(relative);
+        const activeStrength = clamp01(1 - distance);
+        const visibility = distance <= 1.2 ? 1 : clamp01((2.45 - distance) / 1.25);
+        const opacity = visibility * (0.43 + activeStrength * 0.57);
+        const scale = 0.99 + activeStrength * 0.045;
         const alpha = 0.46 + activeStrength * 0.53;
-        const weight = Math.round(500 + activeStrength * 100);
+        const weight = Math.round(500 + activeStrength * 150);
 
         return (
           <div
@@ -189,21 +175,22 @@ function LyricCarousel({
               left: 0,
               right: 0,
               top: "50%",
-              padding: "0 12px",
+              padding: "0 22px",
               opacity,
-              transform: `translateY(calc(-50% + ${relative * rowGap}px)) scale(${scale})`,
+              transform: `translateY(calc(-50% + ${relative * rowStep}px)) scale(${scale})`,
               transformOrigin: "center",
               fontSize: lyricFontSize(line.text),
               lineHeight: lyricLineHeight(line.text),
               fontWeight: weight,
               color: `rgba(255,255,255,${alpha})`,
               letterSpacing: "-0.035em",
+              whiteSpace: "normal",
               overflow: "visible",
               overflowWrap: "anywhere",
               wordBreak: "keep-all",
               textAlign: "center",
               textShadow:
-                activeStrength > 0.5
+                activeStrength > 0.45
                   ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
                   : "0 2px 17px rgba(0,0,0,.22)",
             }}
@@ -238,15 +225,16 @@ export function MusicVideo({
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
   const transitionSeconds =
     motionPreset === "cinematic"
-      ? 0.58 * Math.max(0.85, motionIntensity)
+      ? 0.68 * Math.max(0.85, motionIntensity)
       : motionPreset === "minimal"
-        ? 0.24 * Math.max(0.85, motionIntensity)
-        : 0.46 * Math.max(0.85, motionIntensity);
+        ? 0.32 * Math.max(0.85, motionIntensity)
+        : 0.54 * Math.max(0.85, motionIntensity);
   const transitionFrames = Math.max(1, transitionSeconds * fps);
   const activeStartFrame = focusIndex > 0 ? Math.round(lyrics[focusIndex].time * fps) : 0;
   const transitionProgress = focusIndex > 0
-    ? easeOutQuint((frame - activeStartFrame) / transitionFrames)
+    ? easeInOutCubic((frame - activeStartFrame) / transitionFrames)
     : 1;
+  const railIndex = focusIndex > 0 ? focusIndex - 1 + transitionProgress : focusIndex;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
@@ -392,6 +380,7 @@ export function MusicVideo({
             gridTemplateRows: "auto minmax(0, 1fr) auto",
             alignItems: "start",
             padding: "12px 24px 0 38px",
+            overflow: "visible",
           }}
         >
           <div
@@ -443,7 +432,7 @@ export function MusicVideo({
               overflow: "visible",
             }}
           >
-            <LyricCarousel lyrics={lyrics} focusIndex={focusIndex} transitionProgress={transitionProgress} />
+            <LyricRail lyrics={lyrics} railIndex={railIndex} />
           </div>
 
           <div style={{ width: "100%", alignSelf: "end", paddingTop: 14 }}>
