@@ -37,7 +37,7 @@ const themeFallback: Record<ThemePreset, string> = {
   mono: "linear-gradient(130deg, #777 0%, #4d4d4d 52%, #242424 100%)",
 };
 
-const LYRIC_PAGE_SIZE = 4;
+const LYRIC_PAGE_SIZE = 3;
 
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return "0:00";
