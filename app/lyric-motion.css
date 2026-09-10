@@ -26,7 +26,12 @@
 .lyric-row-inner {
   width: 100%;
   transform: translateY(-50%);
+}
+
+.lyric-row-scale {
+  width: 100%;
   transform-origin: center;
+  will-change: transform;
 }
 
 .lyrics-stack--carousel .lyric-line {
@@ -83,7 +88,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .lyric-row,
-  .lyric-row-inner,
+  .lyric-row-scale,
   .lyrics-stack--carousel .lyric-line {
     transition: none !important;
   }
