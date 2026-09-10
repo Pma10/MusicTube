@@ -137,10 +137,16 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
 
 function LyricPage({
   lines,
+  pageStart,
+  activeIndex,
+  activeProgress,
   opacity,
   offsetY,
 }: {
   lines: LyricLine[];
+  pageStart: number;
+  activeIndex: number;
+  activeProgress: number;
   opacity: number;
   offsetY: number;
 }) {
@@ -159,28 +165,71 @@ function LyricPage({
         overflow: "visible",
       }}
     >
-      {lines.map((line, index) => (
-        <div
-          key={`${line.time}-${index}`}
-          style={{
-            width: "100%",
-            padding: "1px 18px",
-            fontSize: lyricFontSize(line.text),
-            lineHeight: lyricLineHeight(line.text),
-            fontWeight: 450,
-            color: "rgba(255,255,255,.92)",
-            letterSpacing: "-.038em",
-            whiteSpace: "normal",
-            overflow: "visible",
-            overflowWrap: "break-word",
-            wordBreak: "keep-all",
-            textAlign: "center",
-            textShadow: "0 2px 18px rgba(0,0,0,.2)",
-          }}
-        >
-          {line.text || " "}
-        </div>
-      ))}
+      {lines.map((line, index) => {
+        const globalIndex = pageStart + index;
+        const isCurrent = globalIndex === activeIndex;
+        const isLeavingCurrent = globalIndex === activeIndex - 1;
+        const isPast = activeIndex >= 0 && globalIndex < activeIndex;
+
+        let lineOpacity = activeIndex < 0 || globalIndex > activeIndex ? 0.58 : isPast ? 0.34 : 1;
+        let colorAlpha = activeIndex < 0 || globalIndex > activeIndex ? 0.86 : isPast ? 0.72 : 0.99;
+        let fontWeight = activeIndex < 0 || globalIndex > activeIndex ? 500 : isPast ? 450 : 680;
+        let highlight = 0;
+
+        if (isCurrent) {
+          lineOpacity = 0.58 + 0.42 * activeProgress;
+          colorAlpha = 0.86 + 0.13 * activeProgress;
+          fontWeight = Math.round(500 + 180 * activeProgress);
+          highlight = activeProgress;
+        } else if (isLeavingCurrent) {
+          lineOpacity = 1 - 0.66 * activeProgress;
+          colorAlpha = 0.99 - 0.27 * activeProgress;
+          fontWeight = Math.round(680 - 230 * activeProgress);
+          highlight = 1 - activeProgress;
+        }
+
+        return (
+          <div
+            key={`${line.time}-${globalIndex}`}
+            style={{
+              position: "relative",
+              width: "100%",
+              padding: "7px 0",
+              borderRadius: 5,
+              background: `linear-gradient(90deg, rgba(95,126,203,${0.29 * highlight}), rgba(95,126,203,${0.2 * highlight}))`,
+              boxShadow:
+                highlight > 0.02
+                  ? `inset 2px 0 0 rgba(190,207,255,${0.44 * highlight}), 0 7px 22px rgba(0,0,0,${0.07 * highlight})`
+                  : "none",
+              overflow: "visible",
+            }}
+          >
+            <div
+              style={{
+                width: "100%",
+                padding: "1px 18px",
+                fontSize: lyricFontSize(line.text),
+                lineHeight: lyricLineHeight(line.text),
+                fontWeight,
+                color: `rgba(255,255,255,${colorAlpha})`,
+                opacity: lineOpacity,
+                letterSpacing: "-.038em",
+                whiteSpace: "normal",
+                overflow: "visible",
+                overflowWrap: "break-word",
+                wordBreak: "keep-all",
+                textAlign: "center",
+                textShadow:
+                  highlight > 0.45
+                    ? "0 2px 18px rgba(0,0,0,.3), 0 0 24px rgba(225,233,255,.08)"
+                    : "0 2px 17px rgba(0,0,0,.18)",
+              }}
+            >
+              {line.text || " "}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -200,11 +249,11 @@ export function MusicVideo({
   const { fps, durationInFrames } = useVideoConfig();
   const seconds = frame / fps;
   const lyrics = parseLrc(lyricSource);
-  const rawActiveIndex = findActiveLyricIndex(lyrics, seconds);
-  const focusIndex = lyrics.length ? Math.max(0, rawActiveIndex) : -1;
-  const pageStart = lyricPageStart(focusIndex);
+  const activeIndex = findActiveLyricIndex(lyrics, seconds);
+  const pageStart = lyricPageStart(activeIndex);
   const currentPage = lyrics.slice(pageStart, pageStart + LYRIC_PAGE_SIZE);
-  const previousPage = pageStart > 0 ? lyrics.slice(pageStart - LYRIC_PAGE_SIZE, pageStart) : [];
+  const previousPageStart = Math.max(0, pageStart - LYRIC_PAGE_SIZE);
+  const previousPage = pageStart > 0 ? lyrics.slice(previousPageStart, pageStart) : [];
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
@@ -219,6 +268,9 @@ export function MusicVideo({
   const pageTransition = pageStart > 0
     ? easeInOutCubic((frame - pageStartFrame) / transitionFrames)
     : 1;
+  const activeProgress = activeIndex >= 0
+    ? easeInOutCubic((seconds - lyrics[activeIndex].time) / 0.18)
+    : 0;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
@@ -423,12 +475,18 @@ export function MusicVideo({
                 {previousPage.length && pageTransition < 1 ? (
                   <LyricPage
                     lines={previousPage}
+                    pageStart={previousPageStart}
+                    activeIndex={activeIndex}
+                    activeProgress={activeProgress}
                     opacity={1 - pageTransition}
                     offsetY={-7 * pageTransition}
                   />
                 ) : null}
                 <LyricPage
                   lines={currentPage}
+                  pageStart={pageStart}
+                  activeIndex={activeIndex}
+                  activeProgress={activeProgress}
                   opacity={pageTransition}
                   offsetY={7 * (1 - pageTransition)}
                 />
