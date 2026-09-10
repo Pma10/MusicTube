@@ -37,6 +37,8 @@ const themeFallback: Record<ThemePreset, string> = {
   mono: "linear-gradient(130deg, #777 0%, #4d4d4d 52%, #242424 100%)",
 };
 
+const LYRIC_PAGE_SIZE = 3;
+
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return "0:00";
   const hours = Math.floor(value / 3600);
@@ -49,19 +51,21 @@ function formatTime(value: number) {
 
 function lyricLengthClass(text: string) {
   const length = [...text].length;
-  if (length >= 90) return "lyric-line--xxlong";
-  if (length >= 54) return "lyric-line--xlong";
-  if (length >= 34) return "lyric-line--long";
+  if (length >= 112) return "lyric-line--xxlong";
+  if (length >= 76) return "lyric-line--xlong";
+  if (length >= 48) return "lyric-line--long";
   return "";
 }
 
-function lyricIndexes(length: number, focus: number) {
-  if (!length || focus < 0) return [];
-  const indexes: number[] = [];
-  for (let index = Math.max(0, focus - 2); index <= Math.min(length - 1, focus + 2); index += 1) {
-    indexes.push(index);
-  }
-  return indexes;
+function lyricPageStart(activeIndex: number) {
+  if (activeIndex < 0) return 0;
+  return Math.floor(activeIndex / LYRIC_PAGE_SIZE) * LYRIC_PAGE_SIZE;
+}
+
+function lyricState(globalIndex: number, activeIndex: number) {
+  if (activeIndex < 0 || globalIndex > activeIndex) return "future";
+  if (globalIndex < activeIndex) return "past";
+  return "active";
 }
 
 export function VideoPreview({
@@ -106,8 +110,8 @@ export function VideoPreview({
   }, [duration, isPlaying]);
 
   const activeIndex = findActiveLyricIndex(lyrics, displayTime);
-  const focusIndex = lyrics.length ? Math.max(0, activeIndex) : -1;
-  const indexes = lyricIndexes(lyrics.length, focusIndex);
+  const pageStart = lyricPageStart(activeIndex);
+  const pageLines = lyrics.slice(pageStart, pageStart + LYRIC_PAGE_SIZE);
 
   const transition = {
     soft: { duration: 0.52 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
@@ -116,9 +120,9 @@ export function VideoPreview({
   }[motionPreset];
 
   const lyricTransition = {
-    soft: { duration: 0.46 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
-    cinematic: { duration: 0.58 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
-    minimal: { duration: 0.24 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    soft: { duration: 0.42 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    cinematic: { duration: 0.56 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
+    minimal: { duration: 0.22 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
   }[motionPreset];
 
   const progress = duration > 0 ? Math.min(1, displayTime / duration) : 0;
@@ -208,59 +212,33 @@ export function VideoPreview({
           </motion.div>
 
           <div className="lyrics-stage" aria-live="polite">
-            <div className="lyrics-stack lyrics-stack--carousel">
-              <AnimatePresence initial={false}>
-                {indexes.length ? (
-                  indexes.map((lineIndex) => {
-                    const line = lyrics[lineIndex];
-                    const relative = lineIndex - focusIndex;
-                    const distance = Math.abs(relative);
-                    const isActive = relative === 0;
-                    const targetOpacity = isActive ? 1 : distance === 1 ? 0.46 : 0;
-                    const targetScale = isActive ? 1.055 : 0.985;
-                    const rowGap = 3.85;
-                    const lengthClass = lyricLengthClass(line.text);
-
+            {lyrics.length ? (
+              <AnimatePresence initial={false} mode="sync">
+                <motion.div
+                  className="lyrics-page"
+                  key={`lyrics-page-${pageStart}`}
+                  initial={{ opacity: 0, y: 7 * motionIntensity }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 * motionIntensity }}
+                  transition={lyricTransition}
+                >
+                  {pageLines.map((line, lineIndex) => {
+                    const globalIndex = pageStart + lineIndex;
+                    const state = lyricState(globalIndex, activeIndex);
                     return (
-                      <motion.div
-                        className="lyric-row"
-                        key={`${line.time}-${lineIndex}`}
-                        initial={{ opacity: 0, y: `${(relative + 0.25) * rowGap}cqw` }}
-                        animate={{ opacity: targetOpacity, y: `${relative * rowGap}cqw` }}
-                        exit={{ opacity: 0, y: `${relative < 0 ? -2.2 * rowGap : 2.2 * rowGap}cqw` }}
-                        transition={lyricTransition}
-                        aria-hidden={distance >= 2}
+                      <div
+                        className={`lyrics-page-line lyrics-page-line--${state}`}
+                        key={`${line.time}-${globalIndex}`}
                       >
-                        <div className="lyric-row-inner">
-                          <motion.div
-                            className="lyric-row-scale"
-                            animate={{ scale: targetScale }}
-                            transition={lyricTransition}
-                          >
-                            <div className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}>
-                              {line.text || " "}
-                            </div>
-                          </motion.div>
-                        </div>
-                      </motion.div>
+                        <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
+                      </div>
                     );
-                  })
-                ) : (
-                  <motion.div
-                    key="empty-lyrics"
-                    className="lyric-row lyric-row--empty"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={lyricTransition}
-                  >
-                    <div className="lyric-row-inner">
-                      <div className="lyric-line lyric-line--empty">가사를 입력하면 여기에 표시됩니다.</div>
-                    </div>
-                  </motion.div>
-                )}
+                  })}
+                </motion.div>
               </AnimatePresence>
-            </div>
+            ) : (
+              <div className="lyric-empty-state">가사를 입력하면 여기에 표시됩니다.</div>
+            )}
           </div>
 
           <div className="player-area">
