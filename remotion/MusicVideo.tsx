@@ -66,6 +66,10 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+function easeOutQuint(value: number) {
+  return 1 - Math.pow(1 - clamp01(value), 5);
+}
+
 function formatTime(value: number) {
   const safe = Number.isFinite(value) ? Math.max(0, value) : 0;
   const hours = Math.floor(safe / 3600);
@@ -85,19 +89,21 @@ function titleFontSize(value: string) {
   return 43;
 }
 
-function lyricFontSize(value: string, active: boolean) {
+function lyricFontSize(value: string) {
   const length = [...value].length;
-  if (length >= 80) return active ? 15 : 12;
-  if (length >= 54) return active ? 18 : 14;
-  if (length >= 34) return active ? 20 : 16;
-  return active ? 23 : 18;
+  if (length >= 120) return 11;
+  if (length >= 90) return 13;
+  if (length >= 54) return 15;
+  if (length >= 34) return 17;
+  return 20;
 }
 
-function lyricLineHeight(value: string, active: boolean) {
+function lyricLineHeight(value: string) {
   const length = [...value].length;
-  if (length >= 54) return active ? 1.12 : 1.14;
-  if (length >= 34) return active ? 1.15 : 1.17;
-  return active ? 1.18 : 1.22;
+  if (length >= 90) return 1.16;
+  if (length >= 54) return 1.18;
+  if (length >= 34) return 1.2;
+  return 1.24;
 }
 
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
@@ -122,81 +128,90 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
   return <div style={style}>{children}</div>;
 }
 
-function LyricStack({
+function LyricCarousel({
   lyrics,
-  index,
-  opacity,
-  y,
+  focusIndex,
+  transitionProgress,
 }: {
   lyrics: LyricLine[];
-  index: number;
-  opacity: number;
-  y: number;
+  focusIndex: number;
+  transitionProgress: number;
 }) {
-  let visible: LyricLine[];
-  let activeOffset = -1;
-
-  if (index < 0) {
-    visible = lyrics.slice(0, 3);
-    activeOffset = visible.length ? 0 : -1;
-  } else {
-    const start = Math.max(0, Math.min(index - 1, Math.max(0, lyrics.length - 3)));
-    visible = lyrics.slice(start, start + 3);
-    activeOffset = index - start;
-  }
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "grid",
-        placeItems: "center",
-        opacity,
-        transform: `translateY(${y}px)`,
-        overflow: "hidden",
-      }}
-    >
+  if (!lyrics.length || focusIndex < 0) {
+    return (
       <div
         style={{
-          width: "100%",
-          maxHeight: "100%",
+          position: "absolute",
+          inset: 0,
           display: "grid",
-          alignContent: "center",
-          gap: 7,
-          overflow: "hidden",
-          textAlign: "center",
+          placeItems: "center",
+          fontSize: 18,
+          color: "rgba(255,255,255,.48)",
         }}
       >
-        {visible.length ? (
-          visible.map((line, visibleIndex) => {
-            const isActive = visibleIndex === activeOffset;
-            return (
-              <div
-                key={`${line.time}-${line.text}-${visibleIndex}`}
-                style={{
-                  maxWidth: "100%",
-                  padding: "0 10px",
-                  fontSize: lyricFontSize(line.text, isActive),
-                  lineHeight: lyricLineHeight(line.text, isActive),
-                  fontWeight: isActive ? 650 : 500,
-                  color: isActive ? "rgba(255,255,255,.98)" : "rgba(255,255,255,.48)",
-                  letterSpacing: "-0.035em",
-                  overflowWrap: "anywhere",
-                  wordBreak: "keep-all",
-                  textShadow: isActive
-                    ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
-                    : "0 2px 17px rgba(0,0,0,.22)",
-                }}
-              >
-                {line.text || " "}
-              </div>
-            );
-          })
-        ) : (
-          <div style={{ fontSize: 18, color: "rgba(255,255,255,.48)" }}>가사가 없습니다.</div>
-        )}
+        가사가 없습니다.
       </div>
+    );
+  }
+
+  const indexes: number[] = [];
+  for (let index = Math.max(0, focusIndex - 2); index <= Math.min(lyrics.length - 1, focusIndex + 2); index += 1) {
+    indexes.push(index);
+  }
+
+  const progress = focusIndex > 0 ? transitionProgress : 1;
+  const rowGap = 66;
+
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "visible" }}>
+      {indexes.map((lineIndex) => {
+        const line = lyrics[lineIndex];
+        const endRelative = lineIndex - focusIndex;
+        const startRelative = focusIndex > 0 ? endRelative + 1 : endRelative;
+        const relative = startRelative + (endRelative - startRelative) * progress;
+        const visibility = clamp01(2 - Math.abs(relative));
+        const activeStrength =
+          lineIndex === focusIndex
+            ? progress
+            : lineIndex === focusIndex - 1 && focusIndex > 0
+              ? 1 - progress
+              : 0;
+        const opacity = visibility * (0.45 + activeStrength * 0.55);
+        const scale = 0.985 + activeStrength * 0.07;
+        const alpha = 0.46 + activeStrength * 0.53;
+        const weight = Math.round(500 + activeStrength * 100);
+
+        return (
+          <div
+            key={`${line.time}-${lineIndex}`}
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: "50%",
+              padding: "0 12px",
+              opacity,
+              transform: `translateY(calc(-50% + ${relative * rowGap}px)) scale(${scale})`,
+              transformOrigin: "center",
+              fontSize: lyricFontSize(line.text),
+              lineHeight: lyricLineHeight(line.text),
+              fontWeight: weight,
+              color: `rgba(255,255,255,${alpha})`,
+              letterSpacing: "-0.035em",
+              overflow: "visible",
+              overflowWrap: "anywhere",
+              wordBreak: "keep-all",
+              textAlign: "center",
+              textShadow:
+                activeStrength > 0.5
+                  ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
+                  : "0 2px 17px rgba(0,0,0,.22)",
+            }}
+          >
+            {line.text || " "}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -216,18 +231,22 @@ export function MusicVideo({
   const { fps, durationInFrames } = useVideoConfig();
   const seconds = frame / fps;
   const lyrics = parseLrc(lyricSource);
-  const activeIndex = findActiveLyricIndex(lyrics, seconds);
+  const rawActiveIndex = findActiveLyricIndex(lyrics, seconds);
+  const focusIndex = lyrics.length ? Math.max(0, rawActiveIndex) : -1;
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
-  const transitionSeconds = motionPreset === "cinematic" ? 0.38 : motionPreset === "minimal" ? 0.18 : 0.28;
-  const transitionFrames = Math.max(1, transitionSeconds * fps * motionIntensity);
-  const activeStartFrame = activeIndex >= 0 ? Math.round(lyrics[activeIndex].time * fps) : 0;
-  const lineProgress = activeIndex >= 0
-    ? clamp01((frame - activeStartFrame) / transitionFrames)
-    : clamp01(frame / transitionFrames);
-  const easedLineProgress = 1 - Math.pow(1 - lineProgress, 3);
-  const showPrevious = activeIndex > 0 && lineProgress < 1;
+  const transitionSeconds =
+    motionPreset === "cinematic"
+      ? 0.58 * Math.max(0.85, motionIntensity)
+      : motionPreset === "minimal"
+        ? 0.24 * Math.max(0.85, motionIntensity)
+        : 0.46 * Math.max(0.85, motionIntensity);
+  const transitionFrames = Math.max(1, transitionSeconds * fps);
+  const activeStartFrame = focusIndex > 0 ? Math.round(lyrics[focusIndex].time * fps) : 0;
+  const transitionProgress = focusIndex > 0
+    ? easeOutQuint((frame - activeStartFrame) / transitionFrames)
+    : 1;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
@@ -421,23 +440,10 @@ export function MusicVideo({
               minHeight: 0,
               width: "100%",
               padding: "8px 8px 18px 0",
-              overflow: "hidden",
+              overflow: "visible",
             }}
           >
-            {showPrevious ? (
-              <LyricStack
-                lyrics={lyrics}
-                index={activeIndex - 1}
-                opacity={(1 - easedLineProgress) * 0.48}
-                y={-7 * easedLineProgress * motionIntensity}
-              />
-            ) : null}
-            <LyricStack
-              lyrics={lyrics}
-              index={activeIndex}
-              opacity={activeIndex < 0 ? clamp01(frame / transitionFrames) : 0.72 + easedLineProgress * 0.28}
-              y={(1 - easedLineProgress) * 9 * motionIntensity}
-            />
+            <LyricCarousel lyrics={lyrics} focusIndex={focusIndex} transitionProgress={transitionProgress} />
           </div>
 
           <div style={{ width: "100%", alignSelf: "end", paddingTop: 14 }}>
