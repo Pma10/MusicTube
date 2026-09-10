@@ -153,7 +153,7 @@ function LyricPage({
         flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
-        padding: "8px 28px 18px 0",
+        padding: "12px 28px 12px 0",
         opacity,
         transform: `translateY(${offsetY}px)`,
         overflow: "visible",
@@ -360,15 +360,16 @@ export function MusicVideo({
           style={{
             minWidth: 0,
             height: "81.5%",
-            display: "grid",
-            gridTemplateRows: "auto minmax(0, 1fr) auto",
-            alignItems: "start",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "stretch",
             padding: "12px 24px 0 38px",
             overflow: "visible",
           }}
         >
           <div
             style={{
+              flex: "0 0 auto",
               opacity: titleIntro,
               transform: `translateY(${interpolate(titleIntro, [0, 1], [26, 0])}px)`,
               minWidth: 0,
@@ -410,9 +411,10 @@ export function MusicVideo({
           <div
             style={{
               position: "relative",
+              flex: "1 1 auto",
               minHeight: 0,
               width: "100%",
-              padding: "8px 8px 18px 0",
+              marginTop: 12,
               overflow: "visible",
             }}
           >
@@ -447,7 +449,7 @@ export function MusicVideo({
             )}
           </div>
 
-          <div style={{ width: "100%", alignSelf: "end", paddingTop: 14 }}>
+          <div style={{ width: "100%", flex: "0 0 auto", paddingTop: 14 }}>
             <div
               style={{
                 display: "grid",
