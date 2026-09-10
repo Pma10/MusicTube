@@ -17,13 +17,15 @@ MusicTube is a local-first studio for building polished, YouTube-ready music vis
 - Warm, Cool and Mono visual themes
 - Subtle Ken Burns background/cover motion while playing
 - Editable title and actual artist metadata; legacy fake channel/logo metadata has been removed
-- Local Remotion render queue with live progress and cancellation
+- Local Remotion render queue with stage-aware live progress, ETA and cancellation
 - Fast 30 FPS and Quality 60 FPS render profiles
 - Intel Quick Sync, NVIDIA NVENC and Apple VideoToolbox hardware encoding when available
 - CPU-aware render concurrency instead of a fixed four-worker cap
 - 1080p, 1440p and 4K H.264 + AAC MP4 output
-- Direct browser download without buffering the whole MP4 in page memory
-- Project configuration export as `.musictube.json`
+- Streaming render uploads to disk instead of buffering large audio files in Node memory
+- Temp-disk capacity preflight and stale render-directory cleanup
+- Resumable HTTP Range downloads for large rendered MP4 files
+- Versioned `.musictube.json` project save/load plus browser draft autosave
 - Responsive editor UI and reduced-motion accessibility
 
 ## Local setup
@@ -69,6 +71,14 @@ If timed lyrics are unavailable for a track, metadata still loads and the editor
 
 > This is still an unofficial Genie integration and depends on the current Genie page/data format. Upstream site changes may occasionally require parser updates.
 
+## Project files and autosave
+
+MusicTube project files are now versioned as schema version 2. The editor can both save and reopen `.musictube.json` files, and version 1 project files are migrated on load.
+
+The project stores title, artist, lyrics, motion/theme settings, render profile/resolution, Genie source metadata, remembered direct HTTPS URLs, media filenames and duration. Local file bytes are intentionally not embedded in the JSON, so an attached audio file still needs to be reattached after reopening a project.
+
+The browser also keeps a debounced local draft in `localStorage`. Reloading or accidentally closing the page restores the last project settings automatically without uploading anything anywhere.
+
 ## MP4 rendering
 
 The Export section submits the selected audio, cover art, title, actual artist, LRC lyrics and motion settings to the local render queue. Jobs run sequentially so accidentally clicking render multiple times does not exhaust the machine.
@@ -100,9 +110,17 @@ Because hardware encoders do not use CRF in this path, MusicTube controls output
 
 Render concurrency scales with the machine instead of being capped at four workers. Fast mode uses up to eight workers while leaving roughly one logical CPU free; Quality uses up to six workers. To override this manually, set `MUSICTUBE_RENDER_CONCURRENCY` to a value from 1 to 16.
 
-The UI polls real render progress, shows the active encoder and worker count, supports cancellation and exposes a direct download button when finished. The MP4 is streamed by the browser instead of first being converted into a giant in-page Blob, which is important for long videos.
+Render requests use a streaming multipart parser. Attached audio and artwork are written incrementally into the job's temporary directory instead of calling `request.formData()` and materializing the whole audio file in Node memory. File, field and multipart-part limits are enforced while the upload is consumed.
 
-Each job gets an isolated operating-system temp directory. Input assets are deleted as soon as rendering finishes; the completed MP4 is kept until download and is then cleaned up. Completed jobs also expire automatically if left unused.
+Before a job is handed to Remotion, MusicTube estimates the expected MP4/workspace size from duration, resolution and the active bitrate profile and checks free space on the operating-system temp volume. If there is not enough headroom the request fails early with a clear storage error instead of rendering for a long time and dying near the end. Stale `musictube-render-*` directories older than 24 hours are also cleaned periodically so process restarts do not leave orphaned temp data forever.
+
+The UI now separates renderer preparation, composition loading, frame rendering and MP4 finalization instead of showing a frozen `0%` while Remotion is bundling. It also exposes queue position and an approximate ETA once enough progress has accumulated.
+
+Cancellation is race-safe: a running renderer receives Remotion's cancellation signal first and its temp directory is removed only after the renderer unwinds. Queued jobs can still be removed immediately. Invalid render settings also pass through the same cleanup path, so an already-streamed upload is not leaked when validation rejects the job.
+
+Completed MP4 files are retained for roughly six hours and may be downloaded more than once. The download endpoint supports HTTP `Range` and `HEAD`, so browser retries/resume do not destroy the only copy. Accessing the completed file refreshes its retention window; expired jobs are removed automatically.
+
+Each job gets an isolated operating-system temp directory. Input assets are deleted as soon as rendering finishes while the completed MP4 remains available during its retention window.
 
 Remotion may download its headless Chrome build the first time rendering is used, so the first export can take longer than later exports. Hardware encoding speeds up H.264 compression, while React/Chromium frame generation still consumes CPU. Fast 1080p remains the practical default for long-form uploads.
 
@@ -120,7 +138,7 @@ Genie is used for metadata, artwork and synced lyrics. MusicTube does not scrape
 {"url":"https://cdn.example.com/audio/song.mp3","filename":"song.mp3"}
 ```
 
-2. **Direct audio URL** — paste a direct HTTPS URL to an audio file. `/api/media/import` validates the destination, blocks private/local network targets, follows a small number of validated redirects, checks the response is audio-like, and limits imports to 160 MB.
+2. **Direct audio URL** — paste a direct HTTPS URL to an audio file. `/api/media/import` validates the destination, blocks private/local network targets, follows a small number of validated redirects, checks the response is audio-like, and limits imports to 160 MB. The proxy now streams the remote body through to the browser with an in-flight byte cap instead of constructing a second full in-memory copy on the server.
 
 3. **Attachment** — attach or drag an MP3, WAV, M4A, AAC, FLAC, OGG, or OPUS file directly into the editor. You can also attach an `.lrc` file separately.
 
