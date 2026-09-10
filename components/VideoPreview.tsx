@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import {
   Heart,
   MoreVertical,
@@ -46,19 +47,21 @@ function formatTime(value: number) {
     : `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function visibleLyrics(lyrics: LyricLine[], activeIndex: number) {
-  if (activeIndex < 0) {
-    return { lines: lyrics.slice(0, 3), activeOffset: lyrics.length ? 0 : -1 };
-  }
-  const start = Math.max(0, Math.min(activeIndex - 1, Math.max(0, lyrics.length - 3)));
-  return { lines: lyrics.slice(start, start + 3), activeOffset: activeIndex - start };
-}
-
 function lyricLengthClass(text: string) {
   const length = [...text].length;
+  if (length >= 90) return "lyric-line--xxlong";
   if (length >= 54) return "lyric-line--xlong";
   if (length >= 34) return "lyric-line--long";
   return "";
+}
+
+function lyricIndexes(length: number, focus: number) {
+  if (!length || focus < 0) return [];
+  const indexes: number[] = [];
+  for (let index = Math.max(0, focus - 2); index <= Math.min(length - 1, focus + 2); index += 1) {
+    indexes.push(index);
+  }
+  return indexes;
 }
 
 export function VideoPreview({
@@ -75,9 +78,36 @@ export function VideoPreview({
   onTogglePlay,
   onSeek,
 }: Props) {
-  const activeIndex = findActiveLyricIndex(lyrics, currentTime);
-  const lyricWindow = visibleLyrics(lyrics, activeIndex);
-  const lyricSlots = [0, 1, 2].map((index) => lyricWindow.lines[index] ?? null);
+  const [displayTime, setDisplayTime] = useState(currentTime);
+  const timeAnchorRef = useRef({ media: currentTime, clock: 0 });
+
+  useEffect(() => {
+    timeAnchorRef.current = { media: currentTime, clock: performance.now() };
+    if (!isPlaying) setDisplayTime(currentTime);
+  }, [currentTime, isPlaying]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    let frameId = 0;
+    let lastPaint = 0;
+
+    const tick = (now: number) => {
+      if (now - lastPaint >= 32) {
+        const anchor = timeAnchorRef.current;
+        const predicted = anchor.media + Math.max(0, now - anchor.clock) / 1000;
+        setDisplayTime(Math.min(duration, Math.max(0, predicted)));
+        lastPaint = now;
+      }
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [duration, isPlaying]);
+
+  const activeIndex = findActiveLyricIndex(lyrics, displayTime);
+  const focusIndex = lyrics.length ? Math.max(0, activeIndex) : -1;
+  const indexes = lyricIndexes(lyrics.length, focusIndex);
 
   const transition = {
     soft: { duration: 0.52 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
@@ -86,12 +116,12 @@ export function VideoPreview({
   }[motionPreset];
 
   const lyricTransition = {
-    soft: { duration: 0.24 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
-    cinematic: { duration: 0.32 * motionIntensity, ease: [0.16, 1, 0.3, 1] as const },
-    minimal: { duration: 0.16 * motionIntensity, ease: "easeOut" as const },
+    soft: { duration: 0.46 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    cinematic: { duration: 0.58 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
+    minimal: { duration: 0.24 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
   }[motionPreset];
 
-  const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
+  const progress = duration > 0 ? Math.min(1, displayTime / duration) : 0;
 
   return (
     <section className={`video-shell theme-${theme}`}>
@@ -143,10 +173,7 @@ export function VideoPreview({
           </motion.div>
         </motion.div>
 
-        <div
-          className="track-panel"
-          style={{ padding: "1.2% 2.5% 0 3.6%" }}
-        >
+        <div className="track-panel" style={{ padding: "1.2% 2.5% 0 3.6%" }}>
           <motion.div
             className="track-heading"
             initial={{ opacity: 0, y: 24 }}
@@ -181,39 +208,56 @@ export function VideoPreview({
           </motion.div>
 
           <div className="lyrics-stage" aria-live="polite">
-            <div className="lyrics-stack">
-              {lyricSlots.map((line, index) => {
-                const isActive = index === lyricWindow.activeOffset;
-                return (
-                  <div className="lyric-slot" key={`lyric-slot-${index}`}>
-                    <AnimatePresence initial={false} mode="sync">
-                      {line ? (
+            <div className="lyrics-stack lyrics-stack--carousel">
+              <AnimatePresence initial={false}>
+                {indexes.length ? (
+                  indexes.map((lineIndex) => {
+                    const line = lyrics[lineIndex];
+                    const relative = lineIndex - focusIndex;
+                    const distance = Math.abs(relative);
+                    const isActive = relative === 0;
+                    const targetOpacity = isActive ? 1 : distance === 1 ? 0.46 : 0;
+                    const targetScale = isActive ? 1.055 : 0.985;
+                    const rowGap = 3.85;
+                    const lengthClass = lyricLengthClass(line.text);
+
+                    return (
+                      <motion.div
+                        className="lyric-row"
+                        key={`${line.time}-${lineIndex}`}
+                        initial={{ opacity: 0, y: `${(relative + 0.25) * rowGap}cqw` }}
+                        animate={{ opacity: targetOpacity, y: `${relative * rowGap}cqw` }}
+                        exit={{ opacity: 0, y: `${relative < 0 ? -2.2 * rowGap : 2.2 * rowGap}cqw` }}
+                        transition={lyricTransition}
+                        aria-hidden={distance >= 2}
+                      >
                         <motion.div
-                          className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lyricLengthClass(line.text)}`.trim()}
-                          key={`${line.time}-${line.text}`}
-                          initial={{ opacity: 0, y: 6 * motionIntensity }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -5 * motionIntensity }}
+                          className="lyric-row-inner"
+                          animate={{ scale: targetScale }}
                           transition={lyricTransition}
                         >
-                          {line.text || " "}
+                          <div className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}>
+                            {line.text || " "}
+                          </div>
                         </motion.div>
-                      ) : lyricWindow.lines.length === 0 && index === 1 ? (
-                        <motion.div
-                          key="empty-lyrics"
-                          className="lyric-line lyric-line--empty"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          transition={lyricTransition}
-                        >
-                          가사를 입력하면 여기에 표시됩니다.
-                        </motion.div>
-                      ) : null}
-                    </AnimatePresence>
-                  </div>
-                );
-              })}
+                      </motion.div>
+                    );
+                  })
+                ) : (
+                  <motion.div
+                    key="empty-lyrics"
+                    className="lyric-row lyric-row--empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={lyricTransition}
+                  >
+                    <div className="lyric-row-inner">
+                      <div className="lyric-line lyric-line--empty">가사를 입력하면 여기에 표시됩니다.</div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
 
@@ -235,7 +279,7 @@ export function VideoPreview({
             </div>
 
             <div className="timeline-row">
-              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(displayTime)}</span>
               <button
                 className="timeline"
                 type="button"
