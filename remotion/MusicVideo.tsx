@@ -66,6 +66,10 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+function easeOutQuint(value: number) {
+  return 1 - Math.pow(1 - clamp01(value), 5);
+}
+
 function formatTime(value: number) {
   const safe = Number.isFinite(value) ? Math.max(0, value) : 0;
   const hours = Math.floor(safe / 3600);
@@ -87,17 +91,19 @@ function titleFontSize(value: string) {
 
 function lyricFontSize(value: string) {
   const length = [...value].length;
-  if (length >= 80) return 12;
-  if (length >= 54) return 13;
-  if (length >= 34) return 15;
-  return 18;
+  if (length >= 120) return 11;
+  if (length >= 90) return 13;
+  if (length >= 54) return 15;
+  if (length >= 34) return 17;
+  return 20;
 }
 
 function lyricLineHeight(value: string) {
   const length = [...value].length;
-  if (length >= 54) return 1.14;
-  if (length >= 34) return 1.18;
-  return 1.22;
+  if (length >= 90) return 1.16;
+  if (length >= 54) return 1.18;
+  if (length >= 34) return 1.2;
+  return 1.24;
 }
 
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
@@ -122,16 +128,16 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
   return <div style={style}>{children}</div>;
 }
 
-function LyricRail({
+function LyricCarousel({
   lyrics,
-  activeIndex,
+  focusIndex,
   transitionProgress,
 }: {
   lyrics: LyricLine[];
-  activeIndex: number;
+  focusIndex: number;
   transitionProgress: number;
 }) {
-  if (!lyrics.length) {
+  if (!lyrics.length || focusIndex < 0) {
     return (
       <div
         style={{
@@ -148,51 +154,58 @@ function LyricRail({
     );
   }
 
-  const currentIndex = activeIndex < 0 ? 0 : activeIndex;
-  const progress = activeIndex > 0 ? clamp01(transitionProgress) : 1;
-  const rowSpacing = 74;
-  const indices = Array.from({ length: 5 }, (_, offset) => currentIndex - 2 + offset)
-    .filter((index) => index >= 0 && index < lyrics.length);
+  const indexes: number[] = [];
+  for (let index = Math.max(0, focusIndex - 2); index <= Math.min(lyrics.length - 1, focusIndex + 2); index += 1) {
+    indexes.push(index);
+  }
+
+  const progress = focusIndex > 0 ? transitionProgress : 1;
+  const rowGap = 66;
 
   return (
-    <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-      {indices.map((index) => {
-        const line = lyrics[index];
-        const oldRelative = activeIndex > 0 ? index - (currentIndex - 1) : index - currentIndex;
-        const newRelative = index - currentIndex;
-        const relative = oldRelative + (newRelative - oldRelative) * progress;
-        const distance = Math.abs(relative);
-        const positionOpacity = distance <= 1 ? 1 : clamp01(2 - distance) * 0.48;
-        const oldEmphasis = activeIndex > 0 && index === currentIndex - 1 ? 1 - progress : 0;
-        const newEmphasis = index === currentIndex ? progress : 0;
-        const emphasis = activeIndex < 0 && index === 0 ? 1 : Math.max(oldEmphasis, newEmphasis);
-        const scale = 1 + emphasis * 0.065;
-        const alpha = 0.48 + emphasis * 0.5;
-        const y = relative * rowSpacing;
+    <div style={{ position: "absolute", inset: 0, overflow: "visible" }}>
+      {indexes.map((lineIndex) => {
+        const line = lyrics[lineIndex];
+        const endRelative = lineIndex - focusIndex;
+        const startRelative = focusIndex > 0 ? endRelative + 1 : endRelative;
+        const relative = startRelative + (endRelative - startRelative) * progress;
+        const visibility = clamp01(2 - Math.abs(relative));
+        const activeStrength =
+          lineIndex === focusIndex
+            ? progress
+            : lineIndex === focusIndex - 1 && focusIndex > 0
+              ? 1 - progress
+              : 0;
+        const opacity = visibility * (0.45 + activeStrength * 0.55);
+        const scale = 0.985 + activeStrength * 0.07;
+        const alpha = 0.46 + activeStrength * 0.53;
+        const weight = Math.round(500 + activeStrength * 100);
 
         return (
           <div
-            key={`${line.time}-${line.text}-${index}`}
+            key={`${line.time}-${lineIndex}`}
             style={{
               position: "absolute",
               left: 0,
               right: 0,
               top: "50%",
-              padding: "0 10px",
+              padding: "0 12px",
+              opacity,
+              transform: `translateY(calc(-50% + ${relative * rowGap}px)) scale(${scale})`,
+              transformOrigin: "center",
               fontSize: lyricFontSize(line.text),
               lineHeight: lyricLineHeight(line.text),
-              fontWeight: emphasis > 0.45 ? 650 : 500,
+              fontWeight: weight,
               color: `rgba(255,255,255,${alpha})`,
               letterSpacing: "-0.035em",
+              overflow: "visible",
               overflowWrap: "anywhere",
               wordBreak: "keep-all",
               textAlign: "center",
-              opacity: positionOpacity,
-              transform: `translateY(-50%) translateY(${y}px) scale(${scale})`,
-              transformOrigin: "center",
-              textShadow: emphasis > 0.35
-                ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
-                : "0 2px 17px rgba(0,0,0,.22)",
+              textShadow:
+                activeStrength > 0.5
+                  ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
+                  : "0 2px 17px rgba(0,0,0,.22)",
             }}
           >
             {line.text || " "}
@@ -218,17 +231,22 @@ export function MusicVideo({
   const { fps, durationInFrames } = useVideoConfig();
   const seconds = frame / fps;
   const lyrics = parseLrc(lyricSource);
-  const activeIndex = findActiveLyricIndex(lyrics, seconds);
+  const rawActiveIndex = findActiveLyricIndex(lyrics, seconds);
+  const focusIndex = lyrics.length ? Math.max(0, rawActiveIndex) : -1;
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
-  const transitionSeconds = motionPreset === "cinematic" ? 0.32 : motionPreset === "minimal" ? 0.16 : 0.24;
-  const transitionFrames = Math.max(1, transitionSeconds * fps * motionIntensity);
-  const activeStartFrame = activeIndex >= 0 ? Math.round(lyrics[activeIndex].time * fps) : 0;
-  const lineProgress = activeIndex >= 0
-    ? clamp01((frame - activeStartFrame) / transitionFrames)
-    : clamp01(frame / transitionFrames);
-  const easedLineProgress = 1 - Math.pow(1 - lineProgress, 3);
+  const transitionSeconds =
+    motionPreset === "cinematic"
+      ? 0.58 * Math.max(0.85, motionIntensity)
+      : motionPreset === "minimal"
+        ? 0.24 * Math.max(0.85, motionIntensity)
+        : 0.46 * Math.max(0.85, motionIntensity);
+  const transitionFrames = Math.max(1, transitionSeconds * fps);
+  const activeStartFrame = focusIndex > 0 ? Math.round(lyrics[focusIndex].time * fps) : 0;
+  const transitionProgress = focusIndex > 0
+    ? easeOutQuint((frame - activeStartFrame) / transitionFrames)
+    : 1;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
@@ -422,14 +440,10 @@ export function MusicVideo({
               minHeight: 0,
               width: "100%",
               padding: "8px 8px 18px 0",
-              overflow: "hidden",
+              overflow: "visible",
             }}
           >
-            <LyricRail
-              lyrics={lyrics}
-              activeIndex={activeIndex}
-              transitionProgress={easedLineProgress}
-            />
+            <LyricCarousel lyrics={lyrics} focusIndex={focusIndex} transitionProgress={transitionProgress} />
           </div>
 
           <div style={{ width: "100%", alignSelf: "end", paddingTop: 14 }}>
