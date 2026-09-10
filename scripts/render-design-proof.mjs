@@ -37,7 +37,7 @@ const inputProps = {
   artist: "BIG Naughty (서동현)",
   lyrics: [
     "[00:01.00]문득 네가 생각나는 밤",
-    "[00:05.00]우리가 걷던 길 위에 서서",
+    "[00:05.00]우리가 아주 오래 걷던 길 위에 다시 서서 잊고 있던 계절과 마음과 목소리까지 천천히 하나씩 떠올려 보는 밤",
     "[00:09.00]그때의 온도를 다시 기억해",
     "[00:13.00]조금 느리게 흘러가는 마음",
   ].join("\n"),
@@ -70,7 +70,7 @@ try {
     serveUrl,
     output,
     inputProps,
-    frame: 195,
+    frame: 158,
     imageFormat: "png",
     logLevel: "warn",
   });
