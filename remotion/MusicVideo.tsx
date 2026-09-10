@@ -92,18 +92,17 @@ function titleFontSize(value: string) {
 
 function lyricFontSize(value: string) {
   const length = [...value].length;
-  if (length >= 120) return 11;
-  if (length >= 90) return 13;
-  if (length >= 54) return 15;
-  if (length >= 34) return 17;
-  return 20;
+  if (length >= 110) return 18;
+  if (length >= 70) return 20;
+  if (length >= 42) return 23;
+  return 27;
 }
 
 function lyricLineHeight(value: string) {
   const length = [...value].length;
-  if (length >= 90) return 1.2;
-  if (length >= 54) return 1.22;
-  if (length >= 34) return 1.25;
+  if (length >= 110) return 1.22;
+  if (length >= 70) return 1.24;
+  if (length >= 42) return 1.27;
   return 1.3;
 }
 
@@ -138,7 +137,7 @@ function LyricRail({ lyrics, railIndex }: { lyrics: LyricLine[]; railIndex: numb
           inset: 0,
           display: "grid",
           placeItems: "center",
-          fontSize: 18,
+          fontSize: 21,
           color: "rgba(255,255,255,.48)",
         }}
       >
@@ -148,7 +147,7 @@ function LyricRail({ lyrics, railIndex }: { lyrics: LyricLine[]; railIndex: numb
   }
 
   const centerIndex = Math.max(0, Math.min(lyrics.length - 1, Math.round(railIndex)));
-  const rowStep = 89;
+  const rowStep = 112;
   const indexes: number[] = [];
   for (let index = Math.max(0, centerIndex - 3); index <= Math.min(lyrics.length - 1, centerIndex + 3); index += 1) {
     indexes.push(index);
@@ -163,7 +162,7 @@ function LyricRail({ lyrics, railIndex }: { lyrics: LyricLine[]; railIndex: numb
         const activeStrength = clamp01(1 - distance);
         const visibility = distance <= 1.2 ? 1 : clamp01((2.45 - distance) / 1.25);
         const opacity = visibility * (0.43 + activeStrength * 0.57);
-        const scale = 0.99 + activeStrength * 0.045;
+        const scale = 0.965 + activeStrength * 0.095;
         const alpha = 0.46 + activeStrength * 0.53;
         const weight = Math.round(500 + activeStrength * 150);
 
@@ -175,7 +174,7 @@ function LyricRail({ lyrics, railIndex }: { lyrics: LyricLine[]; railIndex: numb
               left: 0,
               right: 0,
               top: "50%",
-              padding: "0 22px",
+              padding: "0 18px",
               opacity,
               transform: `translateY(calc(-50% + ${relative * rowStep}px)) scale(${scale})`,
               transformOrigin: "center",
