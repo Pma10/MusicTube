@@ -37,7 +37,7 @@ const themeFallback: Record<ThemePreset, string> = {
   mono: "linear-gradient(130deg, #777 0%, #4d4d4d 52%, #242424 100%)",
 };
 
-const LYRIC_ROW_STEP_CQW = 4.65;
+const LYRIC_ROW_STEP_CQW = 6.05;
 
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return "0:00";
@@ -51,9 +51,9 @@ function formatTime(value: number) {
 
 function lyricLengthClass(text: string) {
   const length = [...text].length;
-  if (length >= 90) return "lyric-line--xxlong";
-  if (length >= 54) return "lyric-line--xlong";
-  if (length >= 34) return "lyric-line--long";
+  if (length >= 110) return "lyric-line--xxlong";
+  if (length >= 70) return "lyric-line--xlong";
+  if (length >= 42) return "lyric-line--long";
   return "";
 }
 
