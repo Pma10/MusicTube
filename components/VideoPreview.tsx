@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import {
   Heart,
@@ -37,6 +37,8 @@ const themeFallback: Record<ThemePreset, string> = {
   mono: "linear-gradient(130deg, #777 0%, #4d4d4d 52%, #242424 100%)",
 };
 
+const LYRIC_ROW_STEP_CQW = 4.65;
+
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return "0:00";
   const hours = Math.floor(value / 3600);
@@ -53,15 +55,6 @@ function lyricLengthClass(text: string) {
   if (length >= 54) return "lyric-line--xlong";
   if (length >= 34) return "lyric-line--long";
   return "";
-}
-
-function lyricIndexes(length: number, focus: number) {
-  if (!length || focus < 0) return [];
-  const indexes: number[] = [];
-  for (let index = Math.max(0, focus - 2); index <= Math.min(length - 1, focus + 2); index += 1) {
-    indexes.push(index);
-  }
-  return indexes;
 }
 
 export function VideoPreview({
@@ -107,7 +100,6 @@ export function VideoPreview({
 
   const activeIndex = findActiveLyricIndex(lyrics, displayTime);
   const focusIndex = lyrics.length ? Math.max(0, activeIndex) : -1;
-  const indexes = lyricIndexes(lyrics.length, focusIndex);
 
   const transition = {
     soft: { duration: 0.52 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
@@ -116,12 +108,13 @@ export function VideoPreview({
   }[motionPreset];
 
   const lyricTransition = {
-    soft: { duration: 0.46 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
-    cinematic: { duration: 0.58 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
-    minimal: { duration: 0.24 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    soft: { duration: 0.5 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    cinematic: { duration: 0.64 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
+    minimal: { duration: 0.28 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
   }[motionPreset];
 
   const progress = duration > 0 ? Math.min(1, displayTime / duration) : 0;
+  const railY = focusIndex < 0 ? 0 : -focusIndex * LYRIC_ROW_STEP_CQW;
 
   return (
     <section className={`video-shell theme-${theme}`}>
@@ -208,59 +201,34 @@ export function VideoPreview({
           </motion.div>
 
           <div className="lyrics-stage" aria-live="polite">
-            <div className="lyrics-stack lyrics-stack--carousel">
-              <AnimatePresence initial={false}>
-                {indexes.length ? (
-                  indexes.map((lineIndex) => {
-                    const line = lyrics[lineIndex];
-                    const relative = lineIndex - focusIndex;
-                    const distance = Math.abs(relative);
-                    const isActive = relative === 0;
-                    const targetOpacity = isActive ? 1 : distance === 1 ? 0.46 : 0;
-                    const targetScale = isActive ? 1.055 : 0.985;
-                    const rowGap = 3.85;
-                    const lengthClass = lyricLengthClass(line.text);
-
+            {lyrics.length ? (
+              <div className="lyrics-viewport">
+                <motion.div className="lyrics-rail" animate={{ y: `${railY}cqw` }} transition={lyricTransition}>
+                  {lyrics.map((line, lineIndex) => {
+                    const distance = focusIndex < 0 ? lineIndex : Math.abs(lineIndex - focusIndex);
+                    const isActive = lineIndex === focusIndex;
+                    const isNear = distance === 1;
+                    const hidden = distance > 2;
                     return (
-                      <motion.div
-                        className="lyric-row"
+                      <div
+                        className="lyric-rail-row"
                         key={`${line.time}-${lineIndex}`}
-                        initial={{ opacity: 0, y: `${(relative + 0.25) * rowGap}cqw` }}
-                        animate={{ opacity: targetOpacity, y: `${relative * rowGap}cqw` }}
-                        exit={{ opacity: 0, y: `${relative < 0 ? -2.2 * rowGap : 2.2 * rowGap}cqw` }}
-                        transition={lyricTransition}
-                        aria-hidden={distance >= 2}
+                        style={{ top: `${lineIndex * LYRIC_ROW_STEP_CQW}cqw` }}
+                        aria-hidden={hidden}
                       >
-                        <div className="lyric-row-inner">
-                          <motion.div
-                            className="lyric-row-scale"
-                            animate={{ scale: targetScale }}
-                            transition={lyricTransition}
-                          >
-                            <div className={`lyric-line ${isActive ? "lyric-line--active" : ""} ${lengthClass}`.trim()}>
-                              {line.text || " "}
-                            </div>
-                          </motion.div>
+                        <div
+                          className={`lyric-rail-line ${isActive ? "lyric-rail-line--active" : ""} ${isNear ? "lyric-rail-line--near" : ""} ${hidden ? "lyric-rail-line--hidden" : ""}`.trim()}
+                        >
+                          <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
                         </div>
-                      </motion.div>
+                      </div>
                     );
-                  })
-                ) : (
-                  <motion.div
-                    key="empty-lyrics"
-                    className="lyric-row lyric-row--empty"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={lyricTransition}
-                  >
-                    <div className="lyric-row-inner">
-                      <div className="lyric-line lyric-line--empty">가사를 입력하면 여기에 표시됩니다.</div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                  })}
+                </motion.div>
+              </div>
+            ) : (
+              <div className="lyric-empty-state">가사를 입력하면 여기에 표시됩니다.</div>
+            )}
           </div>
 
           <div className="player-area">
