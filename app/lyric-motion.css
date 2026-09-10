@@ -6,13 +6,29 @@
   overflow: visible;
 }
 
+.track-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.track-heading {
+  flex: 0 0 auto;
+}
+
 .lyrics-stage {
   position: relative;
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
-  padding: 2.2% 1.6% 1.6% 0;
-  display: grid;
-  place-items: center;
+  width: 100%;
+  padding: 3% 1.6% 1.8% 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-area {
+  flex: 0 0 auto;
 }
 
 .lyrics-page {
@@ -20,7 +36,7 @@
   inset: 0;
   width: 100%;
   min-width: 0;
-  padding: 2% 4% 1% 1.5%;
+  padding: 3% 4% 2% 1.5%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -75,7 +91,6 @@
 
 .lyric-empty-state {
   width: 100%;
-  align-self: center;
   text-align: center;
   color: rgba(255, 255, 255, 0.52);
   font-size: clamp(13px, 1.5cqw, 24px);
@@ -84,7 +99,7 @@
 
 @media (max-width: 620px) {
   .lyrics-stage {
-    padding-top: 1%;
+    padding-top: 1.5%;
   }
 
   .lyrics-page {
