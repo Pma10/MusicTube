@@ -74,7 +74,7 @@ try {
     serveUrl,
     output,
     inputProps,
-    frame: 300,
+    frame: 180,
     imageFormat: "png",
     logLevel: "warn",
   });
