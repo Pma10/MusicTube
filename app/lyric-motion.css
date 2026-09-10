@@ -41,6 +41,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: clamp(2px, 0.18cqw, 4px);
   text-align: center;
   pointer-events: none;
   will-change: transform, opacity;
@@ -146,6 +147,7 @@
 
   .lyrics-page {
     padding-inline: 1%;
+    gap: 1px;
   }
 
   .lyrics-page-line {
