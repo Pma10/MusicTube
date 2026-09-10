@@ -50,7 +50,7 @@
   position: relative;
   width: 100%;
   min-width: 0;
-  padding: clamp(3px, 0.38cqw, 7px) 0;
+  padding: clamp(5px, 0.55cqw, 10px) 0;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -149,7 +149,7 @@
   }
 
   .lyrics-page-line {
-    padding-block: 2px;
+    padding-block: 3px;
   }
 
   .lyrics-page .lyric-line {
