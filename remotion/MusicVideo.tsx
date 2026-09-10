@@ -14,6 +14,8 @@ import type { MusicTubeRenderProps, RenderThemePreset } from "./types";
 
 type LyricLine = { time: number; text: string };
 
+const LYRIC_PAGE_SIZE = 4;
+
 const themeFallback: Record<RenderThemePreset, string> = {
   warm: "linear-gradient(130deg, #918b72 0%, #6f6e5f 38%, #575d5d 68%, #343630 100%)",
   cool: "linear-gradient(130deg, #566479 0%, #40505f 42%, #28303b 100%)",
@@ -92,18 +94,23 @@ function titleFontSize(value: string) {
 
 function lyricFontSize(value: string) {
   const length = [...value].length;
-  if (length >= 110) return 18;
-  if (length >= 70) return 20;
-  if (length >= 42) return 23;
-  return 27;
+  if (length >= 112) return 24;
+  if (length >= 76) return 28;
+  if (length >= 48) return 32;
+  return 38;
 }
 
 function lyricLineHeight(value: string) {
   const length = [...value].length;
-  if (length >= 110) return 1.22;
-  if (length >= 70) return 1.24;
-  if (length >= 42) return 1.27;
-  return 1.3;
+  if (length >= 112) return 1.28;
+  if (length >= 76) return 1.3;
+  if (length >= 48) return 1.32;
+  return 1.36;
+}
+
+function lyricPageStart(activeIndex: number) {
+  if (activeIndex < 0) return 0;
+  return Math.floor(activeIndex / LYRIC_PAGE_SIZE) * LYRIC_PAGE_SIZE;
 }
 
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
@@ -128,76 +135,52 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
   return <div style={style}>{children}</div>;
 }
 
-function LyricRail({ lyrics, railIndex }: { lyrics: LyricLine[]; railIndex: number }) {
-  if (!lyrics.length || railIndex < 0) {
-    return (
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "grid",
-          placeItems: "center",
-          fontSize: 21,
-          color: "rgba(255,255,255,.48)",
-        }}
-      >
-        가사가 없습니다.
-      </div>
-    );
-  }
-
-  const centerIndex = Math.max(0, Math.min(lyrics.length - 1, Math.round(railIndex)));
-  const rowStep = 112;
-  const indexes: number[] = [];
-  for (let index = Math.max(0, centerIndex - 3); index <= Math.min(lyrics.length - 1, centerIndex + 3); index += 1) {
-    indexes.push(index);
-  }
-
+function LyricPage({
+  lines,
+  opacity,
+  offsetY,
+}: {
+  lines: LyricLine[];
+  opacity: number;
+  offsetY: number;
+}) {
   return (
-    <div style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-      {indexes.map((lineIndex) => {
-        const line = lyrics[lineIndex];
-        const relative = lineIndex - railIndex;
-        const distance = Math.abs(relative);
-        const activeStrength = clamp01(1 - distance);
-        const visibility = distance <= 1.2 ? 1 : clamp01((2.45 - distance) / 1.25);
-        const opacity = visibility * (0.43 + activeStrength * 0.57);
-        const scale = 0.965 + activeStrength * 0.095;
-        const alpha = 0.46 + activeStrength * 0.53;
-        const weight = Math.round(500 + activeStrength * 150);
-
-        return (
-          <div
-            key={`${line.time}-${lineIndex}`}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: "50%",
-              padding: "0 18px",
-              opacity,
-              transform: `translateY(calc(-50% + ${relative * rowStep}px)) scale(${scale})`,
-              transformOrigin: "center",
-              fontSize: lyricFontSize(line.text),
-              lineHeight: lyricLineHeight(line.text),
-              fontWeight: weight,
-              color: `rgba(255,255,255,${alpha})`,
-              letterSpacing: "-0.035em",
-              whiteSpace: "normal",
-              overflow: "visible",
-              overflowWrap: "anywhere",
-              wordBreak: "keep-all",
-              textAlign: "center",
-              textShadow:
-                activeStrength > 0.45
-                  ? "0 2px 18px rgba(0,0,0,.24), 0 0 26px rgba(255,255,255,.055)"
-                  : "0 2px 17px rgba(0,0,0,.22)",
-            }}
-          >
-            {line.text || " "}
-          </div>
-        );
-      })}
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: "8px 28px 18px 0",
+        opacity,
+        transform: `translateY(${offsetY}px)`,
+        overflow: "visible",
+      }}
+    >
+      {lines.map((line, index) => (
+        <div
+          key={`${line.time}-${index}`}
+          style={{
+            width: "100%",
+            padding: "1px 18px",
+            fontSize: lyricFontSize(line.text),
+            lineHeight: lyricLineHeight(line.text),
+            fontWeight: 450,
+            color: "rgba(255,255,255,.92)",
+            letterSpacing: "-.038em",
+            whiteSpace: "normal",
+            overflow: "visible",
+            overflowWrap: "break-word",
+            wordBreak: "keep-all",
+            textAlign: "center",
+            textShadow: "0 2px 18px rgba(0,0,0,.2)",
+          }}
+        >
+          {line.text || " "}
+        </div>
+      ))}
     </div>
   );
 }
@@ -219,21 +202,23 @@ export function MusicVideo({
   const lyrics = parseLrc(lyricSource);
   const rawActiveIndex = findActiveLyricIndex(lyrics, seconds);
   const focusIndex = lyrics.length ? Math.max(0, rawActiveIndex) : -1;
+  const pageStart = lyricPageStart(focusIndex);
+  const currentPage = lyrics.slice(pageStart, pageStart + LYRIC_PAGE_SIZE);
+  const previousPage = pageStart > 0 ? lyrics.slice(pageStart - LYRIC_PAGE_SIZE, pageStart) : [];
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
   const transitionSeconds =
     motionPreset === "cinematic"
-      ? 0.68 * Math.max(0.85, motionIntensity)
+      ? 0.56 * Math.max(0.85, motionIntensity)
       : motionPreset === "minimal"
-        ? 0.32 * Math.max(0.85, motionIntensity)
-        : 0.54 * Math.max(0.85, motionIntensity);
+        ? 0.22 * Math.max(0.85, motionIntensity)
+        : 0.42 * Math.max(0.85, motionIntensity);
   const transitionFrames = Math.max(1, transitionSeconds * fps);
-  const activeStartFrame = focusIndex > 0 ? Math.round(lyrics[focusIndex].time * fps) : 0;
-  const transitionProgress = focusIndex > 0
-    ? easeInOutCubic((frame - activeStartFrame) / transitionFrames)
+  const pageStartFrame = pageStart > 0 ? Math.round(lyrics[pageStart].time * fps) : 0;
+  const pageTransition = pageStart > 0
+    ? easeInOutCubic((frame - pageStartFrame) / transitionFrames)
     : 1;
-  const railIndex = focusIndex > 0 ? focusIndex - 1 + transitionProgress : focusIndex;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
@@ -431,7 +416,35 @@ export function MusicVideo({
               overflow: "visible",
             }}
           >
-            <LyricRail lyrics={lyrics} railIndex={railIndex} />
+            {lyrics.length ? (
+              <>
+                {previousPage.length && pageTransition < 1 ? (
+                  <LyricPage
+                    lines={previousPage}
+                    opacity={1 - pageTransition}
+                    offsetY={-7 * pageTransition}
+                  />
+                ) : null}
+                <LyricPage
+                  lines={currentPage}
+                  opacity={pageTransition}
+                  offsetY={7 * (1 - pageTransition)}
+                />
+              </>
+            ) : (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 24,
+                  color: "rgba(255,255,255,.52)",
+                }}
+              >
+                가사가 없습니다.
+              </div>
+            )}
           </div>
 
           <div style={{ width: "100%", alignSelf: "end", paddingTop: 14 }}>
