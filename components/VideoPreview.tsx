@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import {
   Heart,
@@ -37,7 +37,7 @@ const themeFallback: Record<ThemePreset, string> = {
   mono: "linear-gradient(130deg, #777 0%, #4d4d4d 52%, #242424 100%)",
 };
 
-const LYRIC_ROW_STEP_CQW = 6.05;
+const LYRIC_PAGE_SIZE = 4;
 
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return "0:00";
@@ -51,10 +51,15 @@ function formatTime(value: number) {
 
 function lyricLengthClass(text: string) {
   const length = [...text].length;
-  if (length >= 110) return "lyric-line--xxlong";
-  if (length >= 70) return "lyric-line--xlong";
-  if (length >= 42) return "lyric-line--long";
+  if (length >= 112) return "lyric-line--xxlong";
+  if (length >= 76) return "lyric-line--xlong";
+  if (length >= 48) return "lyric-line--long";
   return "";
+}
+
+function lyricPageStart(activeIndex: number) {
+  if (activeIndex < 0) return 0;
+  return Math.floor(activeIndex / LYRIC_PAGE_SIZE) * LYRIC_PAGE_SIZE;
 }
 
 export function VideoPreview({
@@ -99,7 +104,8 @@ export function VideoPreview({
   }, [duration, isPlaying]);
 
   const activeIndex = findActiveLyricIndex(lyrics, displayTime);
-  const focusIndex = lyrics.length ? Math.max(0, activeIndex) : -1;
+  const pageStart = lyricPageStart(activeIndex);
+  const pageLines = lyrics.slice(pageStart, pageStart + LYRIC_PAGE_SIZE);
 
   const transition = {
     soft: { duration: 0.52 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
@@ -108,13 +114,12 @@ export function VideoPreview({
   }[motionPreset];
 
   const lyricTransition = {
-    soft: { duration: 0.5 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
-    cinematic: { duration: 0.64 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
-    minimal: { duration: 0.28 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    soft: { duration: 0.42 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    cinematic: { duration: 0.56 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
+    minimal: { duration: 0.22 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
   }[motionPreset];
 
   const progress = duration > 0 ? Math.min(1, displayTime / duration) : 0;
-  const railY = focusIndex < 0 ? 0 : -focusIndex * LYRIC_ROW_STEP_CQW;
 
   return (
     <section className={`video-shell theme-${theme}`}>
@@ -202,30 +207,22 @@ export function VideoPreview({
 
           <div className="lyrics-stage" aria-live="polite">
             {lyrics.length ? (
-              <div className="lyrics-viewport">
-                <motion.div className="lyrics-rail" animate={{ y: `${railY}cqw` }} transition={lyricTransition}>
-                  {lyrics.map((line, lineIndex) => {
-                    const distance = focusIndex < 0 ? lineIndex : Math.abs(lineIndex - focusIndex);
-                    const isActive = lineIndex === focusIndex;
-                    const isNear = distance === 1;
-                    const hidden = distance > 2;
-                    return (
-                      <div
-                        className="lyric-rail-row"
-                        key={`${line.time}-${lineIndex}`}
-                        style={{ top: `${lineIndex * LYRIC_ROW_STEP_CQW}cqw` }}
-                        aria-hidden={hidden}
-                      >
-                        <div
-                          className={`lyric-rail-line ${isActive ? "lyric-rail-line--active" : ""} ${isNear ? "lyric-rail-line--near" : ""} ${hidden ? "lyric-rail-line--hidden" : ""}`.trim()}
-                        >
-                          <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
+              <AnimatePresence initial={false} mode="sync">
+                <motion.div
+                  className="lyrics-page"
+                  key={`lyrics-page-${pageStart}`}
+                  initial={{ opacity: 0, y: 7 * motionIntensity }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 * motionIntensity }}
+                  transition={lyricTransition}
+                >
+                  {pageLines.map((line, lineIndex) => (
+                    <div className="lyrics-page-line" key={`${line.time}-${pageStart + lineIndex}`}>
+                      <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
+                    </div>
+                  ))}
                 </motion.div>
-              </div>
+              </AnimatePresence>
             ) : (
               <div className="lyric-empty-state">가사를 입력하면 여기에 표시됩니다.</div>
             )}
