@@ -62,6 +62,12 @@ function lyricPageStart(activeIndex: number) {
   return Math.floor(activeIndex / LYRIC_PAGE_SIZE) * LYRIC_PAGE_SIZE;
 }
 
+function lyricState(globalIndex: number, activeIndex: number) {
+  if (activeIndex < 0 || globalIndex > activeIndex) return "future";
+  if (globalIndex < activeIndex) return "past";
+  return "active";
+}
+
 export function VideoPreview({
   title,
   artist,
@@ -216,11 +222,18 @@ export function VideoPreview({
                   exit={{ opacity: 0, y: -5 * motionIntensity }}
                   transition={lyricTransition}
                 >
-                  {pageLines.map((line, lineIndex) => (
-                    <div className="lyrics-page-line" key={`${line.time}-${pageStart + lineIndex}`}>
-                      <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
-                    </div>
-                  ))}
+                  {pageLines.map((line, lineIndex) => {
+                    const globalIndex = pageStart + lineIndex;
+                    const state = lyricState(globalIndex, activeIndex);
+                    return (
+                      <div
+                        className={`lyrics-page-line lyrics-page-line--${state}`}
+                        key={`${line.time}-${globalIndex}`}
+                      >
+                        <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
+                      </div>
+                    );
+                  })}
                 </motion.div>
               </AnimatePresence>
             ) : (
