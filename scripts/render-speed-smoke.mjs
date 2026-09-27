@@ -9,6 +9,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workDir = join(tmpdir(), `musictube-render-smoke-${process.pid}`);
 const publicDir = join(workDir, "public");
 const output = join(workDir, "smoke.mp4");
+const browserExecutable = process.env.MUSICTUBE_CHROME_PATH;
 
 await mkdir(publicDir, { recursive: true });
 await writeFile(
@@ -42,6 +43,7 @@ try {
     serveUrl,
     id: "MusicTubeVideo",
     inputProps,
+    browserExecutable,
     logLevel: "warn",
   });
 
@@ -52,6 +54,7 @@ try {
   await renderMedia({
     composition,
     serveUrl,
+    browserExecutable,
     codec: "h264",
     outputLocation: output,
     inputProps,
@@ -68,7 +71,7 @@ try {
 
   const info = await stat(output);
   if (info.size <= 0) throw new Error("Fast render smoke test produced an empty MP4");
-  console.log(`Fast render smoke OK: ${info.size} bytes`);
+  console.log(`렌더 확인 완료: ${info.size} bytes`);
 } finally {
   await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   if (serveUrl && !/^https?:\/\//i.test(serveUrl)) {

@@ -2,6 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NextResponse } from "next/server";
+import { createRenderBackdrop } from "@/lib/render-backdrop";
 import { getRenderJob, queueRenderJob, type RenderResolution } from "@/lib/render-jobs";
 import {
   parseRenderMultipart,
@@ -29,7 +30,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_DURATION_SECONDS = 6 * 60 * 60;
-const RESOLUTIONS = new Set<RenderResolution>(["1080p", "1440p", "4k"]);
+const RESOLUTIONS = new Set<RenderResolution>(["720p", "1080p", "1440p", "4k"]);
 const RENDER_PROFILES = new Set<RenderProfile>(["fast", "quality"]);
 
 function text(fields: Record<string, string>, key: string, fallback = "") {
@@ -131,6 +132,17 @@ export async function POST(request: Request) {
       }
     }
 
+    let backdropPath: string | null = null;
+    if (coverPath) {
+      const generatedPath = "render-backdrop.jpg";
+      try {
+        await createRenderBackdrop(join(publicDir, coverPath), join(publicDir, generatedPath), theme);
+        backdropPath = generatedPath;
+      } catch (error) {
+        console.warn("[MusicTube] blurred backdrop generation failed", error);
+      }
+    }
+
     const title = bounded(text(fields, "title"), 160, "Untitled");
     const artist = bounded(text(fields, "artist"), 160, "Unknown Artist");
     const props: MusicTubeRenderProps = {
@@ -139,6 +151,7 @@ export async function POST(request: Request) {
       lyrics: text(fields, "lyrics").slice(0, 250_000),
       audioPath: audio.filename,
       coverPath,
+      backdropPath,
       durationSeconds,
       motionPreset,
       motionIntensity,

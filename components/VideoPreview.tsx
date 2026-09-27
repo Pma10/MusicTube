@@ -4,12 +4,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import {
   Heart,
-  MoreVertical,
   Pause,
   Play,
   SkipBack,
   SkipForward,
-  X,
 } from "lucide-react";
 import { findActiveLyricIndex, type LyricLine } from "@/lib/lrc";
 
@@ -21,6 +19,7 @@ type Props = {
   artist: string;
   coverUrl: string | null;
   currentTime: number;
+  seekRevision: number;
   duration: number;
   isPlaying: boolean;
   lyrics: LyricLine[];
@@ -57,11 +56,6 @@ function lyricLengthClass(text: string) {
   return "";
 }
 
-function lyricPageStart(activeIndex: number) {
-  if (activeIndex < 0) return 0;
-  return Math.floor(activeIndex / LYRIC_PAGE_SIZE) * LYRIC_PAGE_SIZE;
-}
-
 function lyricState(globalIndex: number, activeIndex: number) {
   if (activeIndex < 0 || globalIndex > activeIndex) return "future";
   if (globalIndex < activeIndex) return "past";
@@ -73,6 +67,7 @@ export function VideoPreview({
   artist,
   coverUrl,
   currentTime,
+  seekRevision,
   duration,
   isPlaying,
   lyrics,
@@ -84,11 +79,41 @@ export function VideoPreview({
 }: Props) {
   const [displayTime, setDisplayTime] = useState(currentTime);
   const timeAnchorRef = useRef({ media: currentTime, clock: 0 });
+  const seekRevisionRef = useRef(seekRevision);
+  const wasPlayingRef = useRef(false);
+  const allowDisplayRegressionRef = useRef(false);
 
   useEffect(() => {
-    timeAnchorRef.current = { media: currentTime, clock: performance.now() };
-    if (!isPlaying) setDisplayTime(currentTime);
-  }, [currentTime, isPlaying]);
+    const now = performance.now();
+    const nextTime = Math.max(0, Math.min(duration, currentTime));
+    const explicitSeek = seekRevisionRef.current !== seekRevision;
+    const justStarted = isPlaying && !wasPlayingRef.current;
+    seekRevisionRef.current = seekRevision;
+    wasPlayingRef.current = isPlaying;
+
+    if (!isPlaying || explicitSeek || justStarted) {
+      timeAnchorRef.current = { media: nextTime, clock: now };
+      allowDisplayRegressionRef.current = true;
+      setDisplayTime(nextTime);
+      return;
+    }
+
+    const anchor = timeAnchorRef.current;
+    const predicted = anchor.media + Math.max(0, now - anchor.clock) / 1000;
+    const regression = predicted - nextTime;
+    // Ignore small backwards clock jitter. A larger jump is an intentional
+    // seek (including one made with the embedded player's own controls).
+    if (regression > 0 && regression <= 0.18) {
+      timeAnchorRef.current = { media: predicted, clock: now };
+      return;
+    }
+
+    timeAnchorRef.current = { media: nextTime, clock: now };
+    if (regression > 0.18) {
+      allowDisplayRegressionRef.current = true;
+      setDisplayTime(nextTime);
+    }
+  }, [currentTime, duration, isPlaying, seekRevision]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -99,7 +124,12 @@ export function VideoPreview({
       if (now - lastPaint >= 32) {
         const anchor = timeAnchorRef.current;
         const predicted = anchor.media + Math.max(0, now - anchor.clock) / 1000;
-        setDisplayTime(Math.min(duration, Math.max(0, predicted)));
+        if (allowDisplayRegressionRef.current) {
+          allowDisplayRegressionRef.current = false;
+          setDisplayTime(Math.min(duration, Math.max(0, predicted)));
+        } else {
+          setDisplayTime((previous) => Math.min(duration, Math.max(previous, predicted)));
+        }
         lastPaint = now;
       }
       frameId = window.requestAnimationFrame(tick);
@@ -110,8 +140,13 @@ export function VideoPreview({
   }, [duration, isPlaying]);
 
   const activeIndex = findActiveLyricIndex(lyrics, displayTime);
-  const pageStart = lyricPageStart(activeIndex);
-  const pageLines = lyrics.slice(pageStart, pageStart + LYRIC_PAGE_SIZE);
+  // Keep the first lyric below the viewport center before its timestamp so
+  // its first transition rises into the active row like every later lyric.
+  const pageStart = activeIndex < 0 ? -2 : activeIndex - 1;
+  const pageLines = Array.from({ length: LYRIC_PAGE_SIZE }, (_, lineIndex) => {
+    const globalIndex = pageStart + lineIndex;
+    return { line: lyrics[globalIndex] ?? null, globalIndex };
+  });
 
   const transition = {
     soft: { duration: 0.52 * motionIntensity, ease: [0.22, 1, 0.36, 1] as const },
@@ -121,8 +156,8 @@ export function VideoPreview({
 
   const lyricTransition = {
     soft: { duration: 0.42 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
-    cinematic: { duration: 0.56 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
-    minimal: { duration: 0.22 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
+    cinematic: { duration: 0.5 * Math.max(0.85, motionIntensity), ease: [0.16, 1, 0.3, 1] as const },
+    minimal: { duration: 0.28 * Math.max(0.85, motionIntensity), ease: [0.22, 1, 0.36, 1] as const },
   }[motionPreset];
 
   const progress = duration > 0 ? Math.min(1, displayTime / duration) : 0;
@@ -138,12 +173,6 @@ export function VideoPreview({
       <div className="ambient-vignette" />
       <div className="video-noise" />
       <div className="video-inner-frame" />
-
-      <div className="chrome-actions" aria-hidden="true">
-        <X strokeWidth={2.6} />
-        <MoreVertical />
-      </div>
-
       <div className="video-grid">
         <motion.div
           className="cover-stage"
@@ -177,9 +206,10 @@ export function VideoPreview({
           </motion.div>
         </motion.div>
 
-        <div className="track-panel" style={{ padding: "1.2% 2.5% 0 3.6%" }}>
+        <div className="track-panel" style={{ padding: "1.2% 3.6% 0" }}>
           <motion.div
             className="track-heading"
+            style={{ textAlign: "center" }}
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.12, ...transition }}
@@ -187,8 +217,7 @@ export function VideoPreview({
             <h2
               style={{
                 maxWidth: "100%",
-                paddingRight: "2%",
-                fontSize: "clamp(22px, 3.65vw, 64px)",
+                fontSize: "clamp(22px, 2.8vw, 48px)",
                 lineHeight: 1.02,
                 whiteSpace: "normal",
                 overflow: "visible",
@@ -201,7 +230,6 @@ export function VideoPreview({
             <p
               style={{
                 maxWidth: "100%",
-                paddingRight: "2%",
                 whiteSpace: "normal",
                 overflow: "visible",
                 textOverflow: "clip",
@@ -216,24 +244,47 @@ export function VideoPreview({
               <AnimatePresence initial={false} mode="sync">
                 <motion.div
                   className="lyrics-page"
-                  key={`lyrics-page-${pageStart}`}
+                  key="lyrics-page"
                   initial={{ opacity: 0, y: 7 * motionIntensity }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -5 * motionIntensity }}
                   transition={lyricTransition}
                 >
-                  {pageLines.map((line, lineIndex) => {
-                    const globalIndex = pageStart + lineIndex;
+                  <AnimatePresence initial={false} mode="sync">
+                  {pageLines.map(({ line, globalIndex }, lineIndex) => {
+                    const lineKey = line
+                      ? `${line.time}-${globalIndex}`
+                      : `empty-${globalIndex}`;
+                    if (!line) {
+                      return (
+                        <div
+                          className="lyrics-page-line lyrics-page-line--empty"
+                          key={lineKey}
+                          style={{ gridRow: lineIndex + 1 }}
+                          aria-hidden="true"
+                        >
+                          <div className="lyric-line">&nbsp;</div>
+                        </div>
+                      );
+                    }
+
                     const state = lyricState(globalIndex, activeIndex);
                     return (
-                      <div
+                      <motion.div
                         className={`lyrics-page-line lyrics-page-line--${state}`}
-                        key={`${line.time}-${globalIndex}`}
+                        key={lineKey}
+                        layout="position"
+                        style={{ gridRow: lineIndex + 1 }}
+                        initial={{ y: "110%" }}
+                        animate={{ y: 0 }}
+                        exit={lineIndex === 0 ? { opacity: 0, y: 0 } : { y: "-110%" }}
+                        transition={lyricTransition}
                       >
                         <div className={`lyric-line ${lyricLengthClass(line.text)}`.trim()}>{line.text || " "}</div>
-                      </div>
+                      </motion.div>
                     );
                   })}
+                  </AnimatePresence>
                 </motion.div>
               </AnimatePresence>
             ) : (

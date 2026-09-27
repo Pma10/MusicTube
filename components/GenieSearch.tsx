@@ -55,9 +55,12 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
         const response = await fetch(`/api/genie/search?q=${encodeURIComponent(cleanQuery)}&limit=8`, {
           signal: controller.signal,
         });
-        const payload = await response.json();
+        const payload = (await response.json()) as { songs?: GenieSong[]; error?: string };
         if (!response.ok) throw new Error(payload.error ?? "검색에 실패했습니다.");
-        if (active) setResults(payload.songs ?? []);
+        if (active) {
+          const uniqueSongs = [...new Map((payload.songs ?? []).map((song) => [song.id, song])).values()];
+          setResults(uniqueSongs);
+        }
       } catch (searchError) {
         if (!active || controller.signal.aborted) return;
         setResults([]);
@@ -108,8 +111,8 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="곡명 또는 아티스트 검색"
-          aria-label="Genie 곡 검색"
+          placeholder="노래 제목 또는 아티스트 검색"
+          aria-label="가사 검색"
         />
         {loading ? <LoaderCircle className={styles.spinner} size={15} aria-label="검색 중" /> : null}
       </div>
@@ -118,11 +121,11 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
 
       {results.length > 0 ? (
         <div className={styles.results}>
-          {results.map((song) => (
+          {results.map((song, index) => (
             <button
               className={styles.result}
               type="button"
-              key={song.id}
+              key={`${song.id}-${index}`}
               onClick={() => applySong(song)}
               disabled={applyingId !== null}
             >
@@ -138,7 +141,7 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
               <span className={styles.meta}>
                 <strong>{song.title}</strong>
                 <span>{song.artist}</span>
-                <small>{song.album || `Genie #${song.id}`}</small>
+                <small>{song.album || "앨범 정보 없음"}</small>
               </span>
               <span className={styles.apply}>
                 {applyingId === song.id ? <LoaderCircle className={styles.spinner} size={14} /> : "불러오기"}
@@ -150,7 +153,6 @@ export function GenieSearch({ onApply }: GenieSearchProps) {
         <div className={styles.empty}>검색 결과가 없습니다.</div>
       ) : null}
 
-      <p className={styles.note}>Genie에서 실제 제목 · 아티스트 · 앨범아트 · 타임싱크 가사를 가져옵니다. 음원은 연결된 자동 소스가 있으면 함께 가져오고, 없으면 URL이나 파일 첨부를 사용할 수 있습니다.</p>
     </div>
   );
 }

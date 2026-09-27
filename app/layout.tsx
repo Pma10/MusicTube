@@ -9,6 +9,7 @@ import "./render.css";
 import "./video-design.css";
 import "./video-tuning.css";
 import "./lyric-motion.css";
+import "./minimal.css";
 
 export const metadata: Metadata = {
   title: "MusicTube Studio",

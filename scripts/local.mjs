@@ -29,6 +29,27 @@ function ensureAcceleration() {
   if (result.error) console.warn(`하드웨어 가속 준비 확인 실패: ${result.error.message}`);
 }
 
+function ensureRemotionAacCompatibility() {
+  const result = spawnSync(process.execPath, [join(root, "scripts", "patch-remotion-aac.mjs")], {
+    cwd: root,
+    stdio: "inherit",
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+function ensureYtDlp() {
+  if (process.env.MUSICTUBE_SKIP_YT_DLP_SETUP === "1") return;
+  const result = spawnSync(process.execPath, [join(root, "scripts", "setup-ytdlp.mjs")], {
+    cwd: root,
+    stdio: "inherit",
+    env: process.env,
+    windowsHide: true,
+  });
+  if (result.error) console.warn(`yt-dlp 설정 오류: ${result.error.message}`);
+}
+
 async function waitFor(url, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -72,9 +93,11 @@ process.once("SIGINT", () => shutdown(0));
 process.once("SIGTERM", () => shutdown(0));
 
 runSetupIfNeeded();
+ensureRemotionAacCompatibility();
 ensureAcceleration();
+ensureYtDlp();
 
-console.log("\nMusicTube Local Studio 시작 중...");
+console.log("\nMusicTube 시작 중…");
 child = spawn(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--port", "3000"], {
   cwd: root,
   stdio: "inherit",
@@ -84,19 +107,17 @@ child = spawn(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--p
 
 child.once("exit", (code, signal) => {
   if (!shuttingDown && code !== 0) {
-    console.error(`\nNext.js 종료: code=${code ?? "null"}, signal=${signal ?? "null"}`);
+    console.error(`\nNext.js 종료 (${code ?? "null"}, ${signal ?? "null"})`);
     shutdown(code ?? 1);
   }
 });
 
 const ready = await waitFor("http://127.0.0.1:3000");
 if (!ready) {
-  console.error("\n시작 실패: Web=FAIL");
+  console.error("\n서버 시작 실패.");
   shutdown(1);
 }
 
-console.log("\nMusicTube 준비 완료: http://127.0.0.1:3000");
-console.log("Genie 검색/가사는 Next.js가 직접 처리합니다. 별도 Python 서비스가 필요 없습니다.");
-console.log("Windows에서는 Intel Quick Sync/NVIDIA NVENC를 자동 감지하고, 불가능할 때만 CPU x264를 사용합니다.");
-console.log("종료하려면 Ctrl+C를 누르세요. 첫 MP4 렌더는 Remotion 브라우저 설치 때문에 조금 더 걸릴 수 있습니다.\n");
+console.log("\nMusicTube 실행 중: http://127.0.0.1:3000");
+console.log("종료: Ctrl+C\n");
 openBrowser("http://127.0.0.1:3000");

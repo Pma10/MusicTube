@@ -12,11 +12,13 @@ const WORKSPACE_MULTIPLIER = 2.25;
 
 const VIDEO_BITRATE_BPS: Record<RenderProfile, Record<RenderResolution, number>> = {
   fast: {
+    "720p": 4_500_000,
     "1080p": 8_000_000,
     "1440p": 14_000_000,
     "4k": 28_000_000,
   },
   quality: {
+    "720p": 6_500_000,
     "1080p": 12_000_000,
     "1440p": 22_000_000,
     "4k": 45_000_000,

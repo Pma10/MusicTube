@@ -409,6 +409,35 @@ button {
   font-size: 10px;
 }
 
+.youtube-source-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -2px 1px 10px;
+  color: #9da5af;
+  font-size: 9px;
+}
+
+.youtube-source-status a {
+  flex: 0 0 auto;
+  color: #d9f66b;
+  text-decoration: none;
+}
+
+.genie-source-details {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.genie-source-details summary {
+  color: #a5acb6;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.genie-source-details[open] summary { margin-bottom: 10px; }
+
 .preview-badges {
   display: flex;
   gap: 7px;
@@ -506,27 +535,6 @@ button {
   letter-spacing: 0.08em;
   transform: rotate(48deg);
   opacity: 0.9;
-}
-
-.chrome-actions {
-  position: absolute;
-  top: 5.4%;
-  right: 3.1%;
-  z-index: 3;
-  display: grid;
-  justify-items: center;
-  gap: 13px;
-  color: rgba(250, 249, 223, 0.88);
-}
-
-.chrome-actions svg:first-child {
-  width: clamp(20px, 3vw, 52px);
-  height: clamp(20px, 3vw, 52px);
-}
-
-.chrome-actions svg:last-child {
-  width: clamp(15px, 1.65vw, 27px);
-  height: clamp(15px, 1.65vw, 27px);
 }
 
 .video-grid {
@@ -813,6 +821,7 @@ button {
   .studio-layout {
     display: flex;
     flex-direction: column-reverse;
+    align-items: stretch;
   }
 
   .editor-panel {

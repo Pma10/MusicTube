@@ -1,8 +1,8 @@
 export type ProjectMotionPreset = "soft" | "cinematic" | "minimal";
 export type ProjectThemePreset = "warm" | "cool" | "mono";
-export type ProjectRenderResolution = "1080p" | "1440p" | "4k";
+export type ProjectRenderResolution = "720p" | "1080p" | "1440p" | "4k";
 export type ProjectRenderProfile = "fast" | "quality";
-export type ProjectAudioOrigin = "attachment" | "url" | "resolver" | null;
+export type ProjectAudioOrigin = "attachment" | "url" | "resolver" | "youtube" | null;
 
 export type MusicTubeProject = {
   version: 2;
@@ -25,6 +25,7 @@ export type MusicTubeProject = {
     audioName: string | null;
     audioOrigin: ProjectAudioOrigin;
     audioImportUrl: string | null;
+    youtubeVideoId: string | null;
     coverName: string | null;
     coverUrl: string | null;
     duration: number | null;
@@ -55,10 +56,11 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[], fall
 }
 
 function audioOrigin(value: unknown): ProjectAudioOrigin {
-  return value === "attachment" || value === "url" || value === "resolver" ? value : null;
+  return value === "attachment" || value === "url" || value === "resolver" || value === "youtube" ? value : null;
 }
 
 function finiteNumber(value: unknown, fallback: number | null, min: number, max: number) {
+  if (value === null || value === undefined) return fallback;
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, number));
@@ -109,13 +111,16 @@ export function parseMusicTubeProject(input: unknown): MusicTubeProject {
       motionIntensity: finiteNumber(appearance.motionIntensity, 1, 0.6, 1.4) ?? 1,
     },
     render: {
-      resolution: enumValue(render.resolution, ["1080p", "1440p", "4k"] as const, "1080p"),
+      resolution: enumValue(render.resolution, ["720p", "1080p", "1440p", "4k"] as const, "1080p"),
       profile: enumValue(render.profile, ["fast", "quality"] as const, "fast"),
     },
     media: {
       audioName: nullableString(media.audioName, 255),
       audioOrigin: audioOrigin(media.audioOrigin),
       audioImportUrl: safeHttpsUrl(media.audioImportUrl),
+      youtubeVideoId: /^[\w-]{11}$/.test(stringValue(media.youtubeVideoId, "", 32))
+        ? stringValue(media.youtubeVideoId, "", 32)
+        : null,
       coverName: nullableString(media.coverName, 255),
       coverUrl: safeHttpsUrl(media.coverUrl),
       duration: finiteNumber(media.duration, null, 0.1, 6 * 60 * 60),

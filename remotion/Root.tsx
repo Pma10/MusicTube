@@ -8,6 +8,7 @@ const defaultProps: MusicTubeRenderProps = {
   lyrics: "[00:02.00]MusicTube\n[00:06.00]Rendered with Remotion",
   audioPath: "",
   coverPath: null,
+  backdropPath: null,
   durationSeconds: 180,
   motionPreset: "soft",
   motionIntensity: 1,

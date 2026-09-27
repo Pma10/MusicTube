@@ -10,16 +10,16 @@
   align-items: center;
   gap: 8px;
   padding: 0 11px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 11px;
-  background: #111319;
-  color: #7f8791;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  background: #0b0b0b;
+  color: rgba(255, 255, 255, 0.65);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .searchBox:focus-within {
-  border-color: rgba(217, 246, 107, 0.48);
-  box-shadow: 0 0 0 3px rgba(217, 246, 107, 0.055);
+  border-color: #fff;
+  box-shadow: none;
 }
 
 .searchBox input {
@@ -28,12 +28,12 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: #f2f3f4;
+  color: #fff;
   font-size: 11px;
 }
 
 .searchBox input::placeholder {
-  color: #646b75;
+  color: rgba(255, 255, 255, 0.42);
 }
 
 .results {
@@ -55,17 +55,16 @@
   gap: 9px;
   padding: 7px;
   border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.025);
+  border-radius: 4px;
+  background: transparent;
   text-align: left;
   cursor: pointer;
   transition: 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .result:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(217, 246, 107, 0.26);
-  background: rgba(217, 246, 107, 0.04);
+  border-color: rgba(255, 255, 255, 0.48);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .result:disabled {
@@ -80,8 +79,8 @@
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #22252b;
-  color: #737b86;
+  background: #fff;
+  color: #080808;
 }
 
 .cover img {
@@ -89,6 +88,7 @@
   height: 100%;
   display: block;
   object-fit: cover;
+  filter: grayscale(1);
 }
 
 .meta {
@@ -106,18 +106,18 @@
 }
 
 .meta strong {
-  color: #eef0f2;
+  color: #fff;
   font-size: 11px;
   font-weight: 650;
 }
 
 .meta span {
-  color: #9aa1aa;
+  color: rgba(255, 255, 255, 0.68);
   font-size: 10px;
 }
 
 .meta small {
-  color: #666e78;
+  color: rgba(255, 255, 255, 0.46);
   font-size: 9px;
 }
 
@@ -125,7 +125,7 @@
   min-width: 46px;
   display: grid;
   place-items: center;
-  color: #cce96b;
+  color: #fff;
   font-size: 9px;
   font-weight: 700;
 }
@@ -133,26 +133,26 @@
 .error,
 .empty {
   padding: 9px 10px;
-  border-radius: 9px;
+  border-radius: 4px;
   font-size: 10px;
   line-height: 1.45;
 }
 
 .error {
-  border: 1px solid rgba(255, 120, 120, 0.16);
-  background: rgba(255, 92, 92, 0.06);
-  color: #efaaaa;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: transparent;
+  color: #fff;
 }
 
 .empty {
-  border: 1px dashed rgba(255, 255, 255, 0.08);
-  color: #707883;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.58);
   text-align: center;
 }
 
 .note {
   margin: 0;
-  color: #606873;
+  color: rgba(255, 255, 255, 0.48);
   font-size: 9px;
   line-height: 1.55;
 }

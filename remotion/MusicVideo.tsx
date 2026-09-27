@@ -8,13 +8,11 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { Heart, MoreVertical, Pause, SkipBack, SkipForward, X } from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import { Heart, Pause, SkipBack, SkipForward } from "lucide-react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import type { MusicTubeRenderProps, RenderThemePreset } from "./types";
 
-type LyricLine = { time: number; text: string };
-
-const LYRIC_PAGE_SIZE = 3;
+type LyricLine = { time: number; text: string; fontSize: number; lineHeight: number };
 
 const themeFallback: Record<RenderThemePreset, string> = {
   warm: "linear-gradient(130deg, #918b72 0%, #6f6e5f 38%, #575d5d 68%, #343630 100%)",
@@ -50,7 +48,12 @@ function parseLrc(input: string): LyricLine[] {
       const minutes = Number(match[1]);
       const seconds = Number(match[2]);
       if (Number.isFinite(minutes) && Number.isFinite(seconds)) {
-        lines.push({ time: minutes * 60 + seconds, text });
+        lines.push({
+          time: minutes * 60 + seconds,
+          text,
+          fontSize: lyricFontSize(text),
+          lineHeight: lyricLineHeight(text),
+        });
       }
     }
   }
@@ -58,10 +61,19 @@ function parseLrc(input: string): LyricLine[] {
 }
 
 function findActiveLyricIndex(lyrics: LyricLine[], time: number) {
-  for (let index = lyrics.length - 1; index >= 0; index -= 1) {
-    if (time >= lyrics[index].time) return index;
+  let low = 0;
+  let high = lyrics.length - 1;
+  let activeIndex = -1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (time >= lyrics[middle].time) {
+      activeIndex = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
   }
-  return -1;
+  return activeIndex;
 }
 
 function clamp01(value: number) {
@@ -108,11 +120,6 @@ function lyricLineHeight(value: string) {
   return 1.36;
 }
 
-function lyricPageStart(activeIndex: number) {
-  if (activeIndex < 0) return 0;
-  return Math.floor(activeIndex / LYRIC_PAGE_SIZE) * LYRIC_PAGE_SIZE;
-}
-
 function ControlIcon({ children, primary = false }: { children: ReactNode; primary?: boolean }) {
   const style: CSSProperties = primary
     ? {
@@ -137,64 +144,49 @@ function ControlIcon({ children, primary = false }: { children: ReactNode; prima
 
 function LyricPage({
   lines,
-  pageStart,
-  activeIndex,
-  activeProgress,
-  opacity,
-  offsetY,
+  scrollPosition,
+  rowHeight,
 }: {
   lines: LyricLine[];
-  pageStart: number;
-  activeIndex: number;
-  activeProgress: number;
-  opacity: number;
-  offsetY: number;
+  scrollPosition: number;
+  rowHeight: number;
 }) {
+  const firstIndex = Math.max(0, Math.floor(scrollPosition) - 1);
+  const lastIndex = Math.min(lines.length - 1, Math.ceil(scrollPosition) + 1);
+
   return (
     <div
       style={{
         position: "absolute",
         inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: "12px 28px 12px 0",
-        opacity,
-        transform: `translateY(${offsetY}px)`,
-        overflow: "visible",
+        overflow: "hidden",
       }}
     >
-      {lines.map((line, index) => {
-        const globalIndex = pageStart + index;
-        const isCurrent = globalIndex === activeIndex;
-        const isLeavingCurrent = globalIndex === activeIndex - 1;
-        const isPast = activeIndex >= 0 && globalIndex < activeIndex;
-
-        let lineOpacity = activeIndex < 0 || globalIndex > activeIndex ? 0.58 : isPast ? 0.34 : 1;
-        let colorAlpha = activeIndex < 0 || globalIndex > activeIndex ? 0.86 : isPast ? 0.72 : 0.99;
-        let fontWeight = activeIndex < 0 || globalIndex > activeIndex ? 500 : isPast ? 450 : 680;
-        let highlight = 0;
-
-        if (isCurrent) {
-          lineOpacity = 0.58 + 0.42 * activeProgress;
-          colorAlpha = 0.86 + 0.13 * activeProgress;
-          fontWeight = Math.round(500 + 180 * activeProgress);
-          highlight = activeProgress;
-        } else if (isLeavingCurrent) {
-          lineOpacity = 1 - 0.66 * activeProgress;
-          colorAlpha = 0.99 - 0.27 * activeProgress;
-          fontWeight = Math.round(680 - 230 * activeProgress);
-          highlight = 1 - activeProgress;
-        }
+      {Array.from({ length: Math.max(0, lastIndex - firstIndex + 1) }, (_, offset) => {
+        const globalIndex = firstIndex + offset;
+        const line = lines[globalIndex];
+        const relativePosition = globalIndex - scrollPosition;
+        const distance = Math.abs(relativePosition);
+        const highlight = clamp01(1 - distance);
+        const lineOpacity = interpolate(distance, [0, 0.72, 1, 1.35, 1.75], [1, 1, 0.58, 0.18, 0], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
+        const colorAlpha = 0.72 + 0.27 * highlight;
+        const fontWeight = Math.round(500 + 180 * highlight);
 
         return (
           <div
             key={`${line.time}-${globalIndex}`}
             style={{
-              position: "relative",
+              position: "absolute",
+              top: "50%",
+              left: 0,
               width: "100%",
-              padding: "7px 0",
+              height: rowHeight,
+              display: "grid",
+              placeItems: "center",
+              transform: `translate3d(0, calc(-50% + ${relativePosition * rowHeight}px), 0)`,
               borderRadius: 5,
               background: `linear-gradient(90deg, rgba(95,126,203,${0.29 * highlight}), rgba(95,126,203,${0.2 * highlight}))`,
               boxShadow:
@@ -208,8 +200,8 @@ function LyricPage({
               style={{
                 width: "100%",
                 padding: "1px 18px",
-                fontSize: lyricFontSize(line.text),
-                lineHeight: lyricLineHeight(line.text),
+                fontSize: line.fontSize,
+                lineHeight: line.lineHeight,
                 fontWeight,
                 color: `rgba(255,255,255,${colorAlpha})`,
                 opacity: lineOpacity,
@@ -240,20 +232,17 @@ export function MusicVideo({
   lyrics: lyricSource,
   audioPath,
   coverPath,
+  backdropPath,
   durationSeconds,
   motionPreset,
   motionIntensity,
   theme,
 }: MusicTubeRenderProps) {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps, height, durationInFrames } = useVideoConfig();
   const seconds = frame / fps;
-  const lyrics = parseLrc(lyricSource);
+  const lyrics = useMemo(() => parseLrc(lyricSource), [lyricSource]);
   const activeIndex = findActiveLyricIndex(lyrics, seconds);
-  const pageStart = lyricPageStart(activeIndex);
-  const currentPage = lyrics.slice(pageStart, pageStart + LYRIC_PAGE_SIZE);
-  const previousPageStart = Math.max(0, pageStart - LYRIC_PAGE_SIZE);
-  const previousPage = pageStart > 0 ? lyrics.slice(previousPageStart, pageStart) : [];
 
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80, mass: 1 } });
   const titleIntro = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 20, stiffness: 72 } });
@@ -264,13 +253,16 @@ export function MusicVideo({
         ? 0.22 * Math.max(0.85, motionIntensity)
         : 0.42 * Math.max(0.85, motionIntensity);
   const transitionFrames = Math.max(1, transitionSeconds * fps);
-  const pageStartFrame = pageStart > 0 ? Math.round(lyrics[pageStart].time * fps) : 0;
-  const pageTransition = pageStart > 0
-    ? easeInOutCubic((frame - pageStartFrame) / transitionFrames)
-    : 1;
-  const activeProgress = activeIndex >= 0
-    ? easeInOutCubic((seconds - lyrics[activeIndex].time) / 0.18)
+  const rowHeight = height * 0.12;
+  const activeStartFrame = activeIndex >= 0 ? Math.round(lyrics[activeIndex].time * fps) : 0;
+  const nextStartFrame = activeIndex >= 0 && activeIndex < lyrics.length - 1
+    ? Math.round(lyrics[activeIndex + 1].time * fps)
+    : Number.POSITIVE_INFINITY;
+  const lyricScrollFrames = Math.max(1, Math.min(transitionFrames, nextStartFrame - activeStartFrame));
+  const lyricScrollProgress = activeIndex >= 0
+    ? easeInOutCubic((frame - activeStartFrame) / lyricScrollFrames)
     : 0;
+  const scrollPosition = activeIndex >= 0 ? activeIndex - 1 + lyricScrollProgress : -1;
 
   const cycle = frame / fps;
   const motionAmount = motionPreset === "minimal" ? 0 : motionIntensity;
@@ -281,6 +273,7 @@ export function MusicVideo({
   const backgroundY = Math.cos(cycle * 0.1) * 9 * motionAmount;
   const progress = durationInFrames > 1 ? frame / (durationInFrames - 1) : 0;
   const coverSrc = coverPath ? staticFile(coverPath) : null;
+  const backdropSrc = backdropPath ? staticFile(backdropPath) : null;
   const displayTitle = title || "Untitled";
 
   return (
@@ -298,32 +291,41 @@ export function MusicVideo({
         style={{
           position: "absolute",
           inset: -100,
-          backgroundImage: coverSrc ? `url(${coverSrc})` : themeFallback[theme],
+          backgroundImage: backdropSrc
+            ? `url(${backdropSrc})`
+            : coverSrc
+              ? `url(${coverSrc})`
+              : themeFallback[theme],
           backgroundSize: "cover",
           backgroundPosition: "center",
-          filter: "blur(50px) saturate(.72) brightness(.64) contrast(1.04)",
+          filter: coverSrc && !backdropSrc ? "blur(50px) saturate(.72) brightness(.64) contrast(1.04)" : "none",
           transform: `translate3d(${backgroundX}px, ${backgroundY}px, 0) scale(${backgroundScale})`,
+          willChange: "transform",
         }}
       />
-      <div style={{ position: "absolute", inset: 0, background: wash[theme] }} />
-      <div style={{ position: "absolute", inset: 0, background: bloom[theme], mixBlendMode: "screen" }} />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: "radial-gradient(ellipse at center, transparent 46%, rgba(7,8,7,.22) 79%, rgba(4,5,4,.42) 100%)",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: 0.07,
-          backgroundImage: "radial-gradient(rgba(255,255,255,.34) .55px, transparent .55px)",
-          backgroundSize: "4px 4px",
-          mixBlendMode: "soft-light",
-        }}
-      />
+      {!backdropSrc ? (
+        <>
+          <div style={{ position: "absolute", inset: 0, background: wash[theme] }} />
+          <div style={{ position: "absolute", inset: 0, background: bloom[theme], mixBlendMode: "screen" }} />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "radial-gradient(ellipse at center, transparent 46%, rgba(7,8,7,.22) 79%, rgba(4,5,4,.42) 100%)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              opacity: 0.07,
+              backgroundImage: "radial-gradient(rgba(255,255,255,.34) .55px, transparent .55px)",
+              backgroundSize: "4px 4px",
+              mixBlendMode: "soft-light",
+            }}
+          />
+        </>
+      ) : null}
       <div
         style={{
           position: "absolute",
@@ -334,23 +336,6 @@ export function MusicVideo({
           zIndex: 9,
         }}
       />
-
-      <div
-        style={{
-          position: "absolute",
-          top: 58,
-          right: 64,
-          zIndex: 3,
-          display: "grid",
-          justifyItems: "center",
-          gap: 12,
-          color: "rgba(250,249,223,.88)",
-          opacity: intro,
-        }}
-      >
-        <X size={44} strokeWidth={2.6} />
-        <MoreVertical size={24} />
-      </div>
 
       <div
         style={{
@@ -374,6 +359,7 @@ export function MusicVideo({
               opacity: intro,
               transform: `translateX(${interpolate(intro, [0, 1], [-28, 0])}px) scale(${interpolate(intro, [0, 1], [0.955, 1]) * coverScale}) rotate(${coverRotate}deg)`,
               transformOrigin: "center",
+              willChange: "transform",
             }}
           >
             {coverSrc ? (
@@ -471,26 +457,7 @@ export function MusicVideo({
             }}
           >
             {lyrics.length ? (
-              <>
-                {previousPage.length && pageTransition < 1 ? (
-                  <LyricPage
-                    lines={previousPage}
-                    pageStart={previousPageStart}
-                    activeIndex={activeIndex}
-                    activeProgress={activeProgress}
-                    opacity={1 - pageTransition}
-                    offsetY={-7 * pageTransition}
-                  />
-                ) : null}
-                <LyricPage
-                  lines={currentPage}
-                  pageStart={pageStart}
-                  activeIndex={activeIndex}
-                  activeProgress={activeProgress}
-                  opacity={pageTransition}
-                  offsetY={7 * (1 - pageTransition)}
-                />
-              </>
+              <LyricPage lines={lyrics} scrollPosition={scrollPosition} rowHeight={rowHeight} />
             ) : (
               <div
                 style={{

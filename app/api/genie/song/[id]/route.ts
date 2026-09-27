@@ -10,7 +10,7 @@ export async function GET(
   const { id } = await context.params;
 
   if (!/^\d+$/.test(id)) {
-    return Response.json({ error: "잘못된 Genie 곡 ID입니다." }, { status: 400 });
+    return Response.json({ error: "잘못된 곡 ID입니다." }, { status: 400 });
   }
 
   try {

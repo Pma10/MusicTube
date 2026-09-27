@@ -8,6 +8,7 @@ export type MusicTubeRenderProps = {
   lyrics: string;
   audioPath: string;
   coverPath: string | null;
+  backdropPath: string | null;
   durationSeconds: number;
   motionPreset: RenderMotionPreset;
   motionIntensity: number;

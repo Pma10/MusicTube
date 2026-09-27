@@ -13,7 +13,7 @@ import {
 } from "@remotion/renderer";
 import type { MusicTubeRenderProps, RenderProfile } from "@/remotion/types";
 
-export type RenderResolution = "1080p" | "1440p" | "4k";
+export type RenderResolution = "720p" | "1080p" | "1440p" | "4k";
 export type RenderJobStatus = "queued" | "rendering" | "completed" | "failed" | "cancelled";
 export type RenderJobStage =
   | "queued"
@@ -50,6 +50,7 @@ type RenderJob = {
   progress: number;
   createdAt: number;
   startedAt: number | null;
+  renderStartedAt: number | null;
   finishedAt: number | null;
   updatedAt: number;
   error: string | null;
@@ -79,6 +80,7 @@ const runtimeState: RenderRuntimeState =
   });
 
 const SCALE: Record<RenderResolution, number> = {
+  "720p": 2 / 3,
   "1080p": 1,
   "1440p": 4 / 3,
   "4k": 2,
@@ -86,11 +88,13 @@ const SCALE: Record<RenderResolution, number> = {
 
 const VIDEO_BITRATES: Record<RenderProfile, Record<RenderResolution, Bitrate>> = {
   fast: {
+    "720p": "4.5M",
     "1080p": "8M",
     "1440p": "14M",
     "4k": "28M",
   },
   quality: {
+    "720p": "6.5M",
     "1080p": "12M",
     "1440p": "22M",
     "4k": "45M",
@@ -120,10 +124,10 @@ function resolveRenderConcurrency(profile: RenderProfile) {
 
   const cores = Math.max(1, availableParallelism());
   if (profile === "fast") {
-    return Math.max(1, Math.min(8, cores <= 2 ? cores : cores - 1));
+    return Math.max(1, Math.min(4, cores <= 2 ? cores : Math.floor(cores / 2)));
   }
 
-  return Math.max(1, Math.min(6, Math.ceil(cores * 0.75)));
+  return Math.max(1, Math.min(4, Math.ceil(cores * 0.5)));
 }
 
 function processSucceeded(command: string, args: string[], timeout = 5_000) {
@@ -276,10 +280,11 @@ function intelQsvOverride(profile: RenderProfile): FfmpegOverride {
 
 async function removePath(path: string | null | undefined) {
   if (!path || /^https?:\/\//i.test(path)) return;
-  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+  await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
 }
 
 function setJobStage(job: RenderJob, stage: RenderJobStage, progress?: number) {
+  if (stage === "rendering" && job.stage !== "rendering") job.renderStartedAt = Date.now();
   job.stage = stage;
   if (typeof progress === "number") job.progress = Math.max(0, Math.min(1, progress));
   job.updatedAt = Date.now();
@@ -296,10 +301,12 @@ function queuePosition(job: RenderJob) {
 }
 
 function estimatedRemainingMs(job: RenderJob) {
-  if (job.status !== "rendering" || !job.startedAt || job.progress < 0.12 || job.progress >= 1) return null;
-  const elapsed = Date.now() - job.startedAt;
+  if (job.status !== "rendering" || job.stage !== "rendering" || !job.renderStartedAt || job.progress >= 0.98) return null;
+  const renderProgress = Math.max(0, Math.min(1, (job.progress - 0.1) / 0.88));
+  if (renderProgress < 0.05) return null;
+  const elapsed = Date.now() - job.renderStartedAt;
   if (elapsed < 1_500) return null;
-  return Math.max(0, Math.round((elapsed / job.progress) * (1 - job.progress)));
+  return Math.max(0, Math.round((elapsed / renderProgress) * (1 - renderProgress)));
 }
 
 function publicJob(job: RenderJob) {
@@ -361,6 +368,7 @@ async function processJob(jobId: string) {
   setJobStage(job, "bundling", 0.01);
 
   const concurrency = resolveRenderConcurrency(job.data.profile);
+  const chromiumOptions = process.platform === "win32" ? { gl: "angle" as const } : undefined;
   const useSoftwareEncoding = job.encoder === "software-x264";
   const hardwareAcceleration = remotionHardwareAcceleration(job.encoder);
   const ffmpegOverride = job.encoder === "intel-qsv" ? intelQsvOverride(job.data.profile) : undefined;
@@ -387,6 +395,7 @@ async function processJob(jobId: string) {
       timeoutInMilliseconds: 120_000,
       logLevel: "warn",
       binariesDirectory: job.binariesDirectory,
+      chromiumOptions,
     });
 
     if (isCancelled(jobId)) return;
@@ -414,6 +423,7 @@ async function processJob(jobId: string) {
       enforceAudioTrack: true,
       overwrite: true,
       concurrency,
+      chromiumOptions,
       timeoutInMilliseconds: 120_000,
       logLevel: "warn",
       cancelSignal,
@@ -478,6 +488,7 @@ export async function queueRenderJob(data: PreparedRenderJob) {
     progress: 0,
     createdAt: now,
     startedAt: null,
+    renderStartedAt: null,
     finishedAt: null,
     updatedAt: now,
     error: null,

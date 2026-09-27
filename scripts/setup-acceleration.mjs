@@ -12,7 +12,8 @@ const ffmpegExe = join(binDir, "ffmpeg.exe");
 const ffprobeExe = join(binDir, "ffprobe.exe");
 const remotionExe = join(binDir, "remotion.exe");
 const compositorDir = join(root, "node_modules", "@remotion", "compositor-win32-x64-msvc");
-const archiveUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+const ffmpegVersion = "7.1.1";
+const archiveUrl = `https://github.com/GyanD/codexffmpeg/releases/download/${ffmpegVersion}/ffmpeg-${ffmpegVersion}-essentials_build.zip`;
 
 function findFile(directory, targetName) {
   const stack = [directory];
@@ -67,6 +68,17 @@ function qsvProbe() {
   return !result.error && result.status === 0;
 }
 
+function installedFfmpegVersion() {
+  if (!existsSync(ffmpegExe)) return null;
+  const result = spawnSync(ffmpegExe, ["-hide_banner", "-version"], {
+    encoding: "utf8",
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) return null;
+  return result.stdout.match(/^ffmpeg version ([^\s]+)/m)?.[1] ?? null;
+}
+
 async function download(url, destination) {
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok || !response.body) {
@@ -91,19 +103,23 @@ async function main() {
   if (process.platform !== "win32" || process.arch !== "x64") return;
 
   if (!hasIntelGraphics() && process.env.MUSICTUBE_FORCE_ACCEL_SETUP !== "1") {
-    console.log("Intel 그래픽이 감지되지 않아 Quick Sync FFmpeg 준비를 건너뜁니다.");
+    console.log("Intel GPU 없음. Quick Sync 건너뜀.");
     return;
   }
 
-  if (existsSync(ffmpegExe) && existsSync(ffprobeExe) && existsSync(remotionExe)) {
+  if (
+    installedFfmpegVersion() === ffmpegVersion &&
+    existsSync(ffprobeExe) &&
+    existsSync(remotionExe)
+  ) {
     console.log(qsvProbe()
-      ? "Intel Quick Sync 준비됨: h264_qsv 사용 가능"
-      : "로컬 FFmpeg는 준비됐지만 h264_qsv를 사용할 수 없습니다. Intel 그래픽 드라이버를 확인하세요.");
+      ? "Quick Sync 사용 가능"
+      : "Quick Sync 사용 불가. 그래픽 드라이버를 확인하세요.");
     return;
   }
 
   if (!existsSync(compositorDir)) {
-    console.warn("Remotion Windows compositor가 아직 없습니다. 먼저 npm install을 실행하세요.");
+    console.warn("npm install을 먼저 실행하세요.");
     return;
   }
 
@@ -112,7 +128,7 @@ async function main() {
   const extractDir = join(cacheRoot, "extract");
 
   try {
-    console.log("\nIntel Quick Sync용 FFmpeg를 한 번만 준비합니다...");
+    console.log("\nQuick Sync 준비 중…");
     rmSync(extractDir, { recursive: true, force: true });
     await download(archiveUrl, zipPath);
     mkdirSync(extractDir, { recursive: true });
@@ -130,8 +146,8 @@ async function main() {
     copyFileSync(downloadedFfprobe, ffprobeExe);
 
     console.log(qsvProbe()
-      ? "Intel Quick Sync 활성화 준비 완료 (h264_qsv)"
-      : "FFmpeg 설치는 완료됐지만 h264_qsv 초기화에 실패했습니다. 최신 Intel Graphics Driver를 설치하면 자동으로 다시 감지됩니다.");
+      ? "Quick Sync 사용 가능"
+      : "Quick Sync 사용 불가. Intel 그래픽 드라이버를 확인하세요.");
   } catch (error) {
     console.warn(`하드웨어 가속 준비를 건너뜁니다: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
